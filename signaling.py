@@ -5,11 +5,12 @@ import pandas_ta as ta
 from datetime import datetime, timedelta
 
 class SignalGenerator:
-    def __init__(self, ticker, ema_period, threshold, stop_loss_percent):
+    def __init__(self, ticker, ema_period, threshold, stop_loss_percent, price_threshold):
         self.ticker = ticker
         self.ema_period = ema_period
         self.threshold = threshold
         self.stop_loss_percent = stop_loss_percent
+        self.price_threshold = price_threshold
 
     def calculate_ema(self, data):
         ema = ta.ema(data['Close'], length=self.ema_period)
@@ -28,10 +29,12 @@ class SignalGenerator:
 
         signal = None
         if abs(deviation) > self.threshold:
-            if deviation < 0:
-                signal = "BUY"
-            else:
-                signal = "SELL"
+            price_change = abs(latest_close - data['Close'].iloc[-2]) / data['Close'].iloc[-2]
+            if price_change >= self.price_threshold:
+                if deviation < 0:
+                    signal = "BUY"
+                else:
+                    signal = "SELL"
 
         return signal, latest_close
 
@@ -44,8 +47,8 @@ def fetch_data(ticker, period="1d", interval="1m"):
     except Exception as e:
         raise ValueError(f"Error fetching data for {ticker}: {str(e)}")
 
-def generate_signal(ticker, ema_period, threshold, stop_loss_percent):
-    generator = SignalGenerator(ticker, ema_period, threshold, stop_loss_percent)
+def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_threshold):
+    generator = SignalGenerator(ticker, ema_period, threshold, stop_loss_percent, price_threshold)
     data = fetch_data(ticker)
     signal, price = generator.generate_signal(data)
     return {
@@ -68,6 +71,7 @@ new_ticker = st.sidebar.text_input("Ticker Symbol").upper()
 ema_period = st.sidebar.number_input("EMA Period", min_value=1, value=20)
 threshold = st.sidebar.number_input("Deviation Threshold", min_value=0.01, value=0.02, format="%.2f")
 stop_loss_percent = st.sidebar.number_input("Stop Loss %", min_value=0.1, value=2.0, format="%.1f")
+price_threshold = st.sidebar.number_input("Price Threshold", min_value=0.001, value=0.005, format="%.3f")
 
 if st.sidebar.button("Add Ticker"):
     if new_ticker:
@@ -75,15 +79,13 @@ if st.sidebar.button("Add Ticker"):
             "ema_period": ema_period,
             "threshold": threshold,
             "stop_loss_percent": stop_loss_percent,
+            "price_threshold": price_threshold,
             "last_signal": None
         }
         st.success(f"Added {new_ticker} to the watchlist.")
 
-# Main page
-st.header("Active Signals")
-
-# Single refresh button for all tickers
-if st.button("Refresh All Signals"):
+# Function to refresh signals
+def refresh_signals():
     progress_bar = st.progress(0)
     status_text = st.empty()
     
@@ -95,7 +97,8 @@ if st.button("Refresh All Signals"):
                 ticker, 
                 ticker_data["ema_period"], 
                 ticker_data["threshold"], 
-                ticker_data["stop_loss_percent"]
+                ticker_data["stop_loss_percent"],
+                ticker_data["price_threshold"]
             )
             st.session_state.tickers[ticker]["last_signal"] = signal_data
         except Exception as e:
@@ -108,30 +111,42 @@ if st.button("Refresh All Signals"):
     status_text.text("All signals refreshed!")
     progress_bar.empty()
 
-# Display signals and parameters for each ticker
+# Main page
+st.header("Trading Signals")
+
+# Single refresh button for all tickers
+if st.button("Refresh All Signals"):
+    refresh_signals()
+
+# Display active signal notifications
+active_signals = [ticker_data["last_signal"] for ticker_data in st.session_state.tickers.values() 
+                  if ticker_data["last_signal"] and ticker_data["last_signal"]["signal"]]
+
+if active_signals:
+    st.subheader("Active Signals")
+    for signal in active_signals:
+        st.info(f"🚨 {signal['ticker']}: {signal['signal']} signal at {signal['price']:.2f} ({signal['timestamp']})")
+
+# Display watchlist as a table
+st.header("Watchlist Summary")
+
 if st.session_state.tickers:
+    watchlist_data = []
     for ticker, ticker_data in st.session_state.tickers.items():
-        st.subheader(ticker)
-        
-        # Display parameters
-        st.write(f"Parameters:")
-        st.write(f"- EMA Period: {ticker_data['ema_period']}")
-        st.write(f"- Threshold: {ticker_data['threshold']:.2f}")
-        st.write(f"- Stop Loss %: {ticker_data['stop_loss_percent']:.1f}")
-        
-        # Display signal
-        if ticker_data["last_signal"]:
-            signal_data = ticker_data["last_signal"]
-            if signal_data["signal"]:
-                st.write(f"Signal: {signal_data['signal']}")
-                st.write(f"Price: {signal_data['price']:.2f}")
-                st.write(f"Timestamp: {signal_data['timestamp']}")
-            else:
-                st.write("No active signal")
-        else:
-            st.write("Waiting for first signal...")
-        
-        st.write("---")  # Add a separator between tickers
+        signal_info = ticker_data["last_signal"] if ticker_data["last_signal"] else {}
+        watchlist_data.append({
+            "Ticker": ticker,
+            "EMA Period": ticker_data["ema_period"],
+            "Threshold": ticker_data["threshold"],
+            "Stop Loss %": ticker_data["stop_loss_percent"],
+            "Price Threshold": ticker_data["price_threshold"],
+            "Last Signal": signal_info.get("signal", "N/A"),
+            "Last Price": f"{signal_info.get('price', 0):.2f}" if signal_info.get('price') else "N/A",
+            "Timestamp": signal_info.get("timestamp", "N/A")
+        })
+    
+    watchlist_df = pd.DataFrame(watchlist_data)
+    st.dataframe(watchlist_df)
 else:
     st.write("No tickers added yet. Use the sidebar to add tickers.")
 
