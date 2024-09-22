@@ -1,8 +1,5 @@
-streamlit==1.28.0
+streamlit==1.22.0
 yfinance==0.2.31
-pandas==2.1.1
+pandas==1.5.3
 pandas-ta==0.3.14b0
-numpy==1.26.0
-matplotlib==3.8.0
-scipy==1.11.3
-setuptools==68.2.2
+numpy==1.23.5
