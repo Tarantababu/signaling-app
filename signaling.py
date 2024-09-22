@@ -1,7 +1,11 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
+try:
+    import pandas_ta as ta
+except ImportError:
+    st.error("Error importing pandas_ta. Please make sure all requirements are installed.")
+    st.stop()
 from datetime import datetime, timedelta
 import time
 
