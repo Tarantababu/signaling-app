@@ -122,56 +122,8 @@ def refresh_signals():
     status_text.text("All signals refreshed!")
     progress_bar.empty()
 
-# CSV Export Function
-def export_watchlist_to_csv():
-    data = []
-    for ticker, ticker_data in st.session_state.tickers.items():
-        data.append({
-            "Ticker": ticker,
-            "EMA Period": ticker_data["ema_period"],
-            "Threshold": ticker_data["threshold"],
-            "Stop Loss %": ticker_data["stop_loss_percent"],
-            "Price Threshold": ticker_data["price_threshold"]
-        })
-    df = pd.DataFrame(data)
-    return df.to_csv(index=False).encode('utf-8')
-
-# CSV Import Function
-def import_watchlist_from_csv(uploaded_file):
-    try:
-        df = pd.read_csv(uploaded_file)
-        for _, row in df.iterrows():
-            ticker = row['Ticker']
-            st.session_state.tickers[ticker] = {
-                "ema_period": int(row['EMA Period']),
-                "threshold": float(row['Threshold']),
-                "stop_loss_percent": float(row['Stop Loss %']),
-                "price_threshold": float(row['Price Threshold']),
-                "last_signal": None
-            }
-        st.success(f"Imported {len(df)} tickers to the watchlist.")
-    except Exception as e:
-        st.error(f"Error importing watchlist: {str(e)}")
-
 # Main page
 st.header("Trading Signals")
-
-# CSV Export and Import
-col1, col2 = st.columns(2)
-with col1:
-    if st.button("Export Watchlist (CSV)"):
-        csv_data = export_watchlist_to_csv()
-        st.download_button(
-            label="Download CSV",
-            data=csv_data,
-            file_name="watchlist.csv",
-            mime="text/csv"
-        )
-
-with col2:
-    uploaded_file = st.file_uploader("Import Watchlist (CSV)", type="csv")
-    if uploaded_file is not None:
-        import_watchlist_from_csv(uploaded_file)
 
 # Single refresh button for all tickers
 if st.button("Refresh All Signals"):
@@ -246,6 +198,55 @@ if st.session_state.tickers:
 
 else:
     st.write("No tickers added yet. Use the sidebar to add tickers or import a watchlist.")
+
+# CSV Export Function
+def export_watchlist_to_csv():
+    data = []
+    for ticker, ticker_data in st.session_state.tickers.items():
+        data.append({
+            "Ticker": ticker,
+            "EMA Period": ticker_data["ema_period"],
+            "Threshold": ticker_data["threshold"],
+            "Stop Loss %": ticker_data["stop_loss_percent"],
+            "Price Threshold": ticker_data["price_threshold"]
+        })
+    df = pd.DataFrame(data)
+    return df.to_csv(index=False).encode('utf-8')
+
+# CSV Import Function
+def import_watchlist_from_csv(uploaded_file):
+    try:
+        df = pd.read_csv(uploaded_file)
+        for _, row in df.iterrows():
+            ticker = row['Ticker']
+            st.session_state.tickers[ticker] = {
+                "ema_period": int(row['EMA Period']),
+                "threshold": float(row['Threshold']),
+                "stop_loss_percent": float(row['Stop Loss %']),
+                "price_threshold": float(row['Price Threshold']),
+                "last_signal": None
+            }
+        st.success(f"Imported {len(df)} tickers to the watchlist.")
+    except Exception as e:
+        st.error(f"Error importing watchlist: {str(e)}")
+
+# Export and Import section at the bottom
+st.header("Export/Import Watchlist")
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("Export Watchlist (CSV)"):
+        csv_data = export_watchlist_to_csv()
+        st.download_button(
+            label="Download CSV",
+            data=csv_data,
+            file_name="watchlist.csv",
+            mime="text/csv"
+        )
+
+with col2:
+    uploaded_file = st.file_uploader("Import Watchlist (CSV)", type="csv")
+    if uploaded_file is not None:
+        import_watchlist_from_csv(uploaded_file)
 
 # Run the app
 if __name__ == "__main__":
