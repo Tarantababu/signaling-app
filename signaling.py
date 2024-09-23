@@ -1,11 +1,12 @@
-import warnings
-warnings.filterwarnings("ignore", category=SyntaxWarning, module="streamlit")
-
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 from datetime import datetime, timedelta
+
+# Suppress warnings
+import warnings
+warnings.filterwarnings("ignore", category=SyntaxWarning, module="streamlit")
 
 class SignalGenerator:
     def __init__(self, ticker, ema_period, threshold, stop_loss_percent, price_threshold):
@@ -69,23 +70,28 @@ if 'tickers' not in st.session_state:
     st.session_state.tickers = {}
 
 # Sidebar for adding new tickers
-st.sidebar.header("Add New Ticker")
-new_ticker = st.sidebar.text_input("Ticker Symbol").upper()
+st.sidebar.header("Add New Tickers")
+new_tickers = st.sidebar.text_input("Ticker Symbols (comma-separated)").upper()
 ema_period = st.sidebar.number_input("EMA Period", min_value=1, value=20)
 threshold = st.sidebar.number_input("Deviation Threshold", min_value=0.01, value=0.02, format="%.2f")
 stop_loss_percent = st.sidebar.number_input("Stop Loss %", min_value=0.1, value=2.0, format="%.1f")
 price_threshold = st.sidebar.number_input("Price Threshold", min_value=0.001, value=0.005, format="%.3f")
 
-if st.sidebar.button("Add Ticker"):
-    if new_ticker:
-        st.session_state.tickers[new_ticker] = {
-            "ema_period": ema_period,
-            "threshold": threshold,
-            "stop_loss_percent": stop_loss_percent,
-            "price_threshold": price_threshold,
-            "last_signal": None
-        }
-        st.success(f"Added {new_ticker} to the watchlist.")
+if st.sidebar.button("Add Tickers"):
+    new_ticker_list = [ticker.strip() for ticker in new_tickers.split(',') if ticker.strip()]
+    for new_ticker in new_ticker_list:
+        if new_ticker:
+            st.session_state.tickers[new_ticker] = {
+                "ema_period": ema_period,
+                "threshold": threshold,
+                "stop_loss_percent": stop_loss_percent,
+                "price_threshold": price_threshold,
+                "last_signal": None
+            }
+    if new_ticker_list:
+        st.success(f"Added {', '.join(new_ticker_list)} to the watchlist.")
+    else:
+        st.warning("No valid tickers entered.")
 
 # Function to refresh signals
 def refresh_signals():
