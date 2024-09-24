@@ -65,7 +65,7 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
     }
 
 # Streamlit app
-st.title("Trading Signal App")
+st.title("Signals")
 
 # Initialize session state
 if 'tickers' not in st.session_state:
@@ -123,7 +123,7 @@ def refresh_signals():
     progress_bar.empty()
 
 # Main page
-st.header("Trading Signals")
+st.header("3:30 PM to 10:00 PM - 2:30 PM to 9:00 PM")
 
 # Single refresh button for all tickers
 if st.button("Refresh All Signals"):
