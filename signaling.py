@@ -1,7 +1,7 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
+import numpy as np
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -10,9 +10,9 @@ import io
 import time
 import threading
 
-# Suppress warnings
-import warnings
-warnings.filterwarnings("ignore", category=SyntaxWarning, module="streamlit")
+# Function to calculate EMA manually
+def calculate_ema(data, period):
+    return data.ewm(span=period, adjust=False).mean()
 
 class SignalGenerator:
     def __init__(self, ticker, ema_period, threshold, stop_loss_percent, price_threshold):
@@ -25,8 +25,7 @@ class SignalGenerator:
         self.signals = []
 
     def calculate_ema(self, data):
-        ema = ta.ema(data['Close'], length=self.ema_period)
-        return ema
+        return calculate_ema(data['Close'], self.ema_period)
 
     def calculate_deviation(self, price, ema):
         return (price - ema) / ema if ema != 0 else 0
@@ -139,14 +138,14 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
     
     # Signals
     for i in range(len(data)):
-        if abs(deviation[i]) > threshold:
-            if deviation[i] < 0:
-                fig.add_trace(go.Scatter(x=[data.index[i]], y=[data['Low'][i]], mode='markers',
+        if abs(deviation.iloc[i]) > threshold:
+            if deviation.iloc[i] < 0:
+                fig.add_trace(go.Scatter(x=[data.index[i]], y=[data['Low'].iloc[i]], mode='markers',
                                          marker=dict(symbol='triangle-up', size=10, color='green'),
                                          name='Buy Signal'),
                               row=1, col=1)
             else:
-                fig.add_trace(go.Scatter(x=[data.index[i]], y=[data['High'][i]], mode='markers',
+                fig.add_trace(go.Scatter(x=[data.index[i]], y=[data['High'].iloc[i]], mode='markers',
                                          marker=dict(symbol='triangle-down', size=10, color='red'),
                                          name='Sell Signal'),
                               row=1, col=1)
