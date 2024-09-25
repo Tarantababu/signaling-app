@@ -226,30 +226,42 @@ if st.session_state.tickers:
     
     # Process edits and deletions
     if not df.equals(edited_df):
+        error_occurred = False
         for index, row in edited_df.iterrows():
             ticker = row['Ticker']
-            if ticker in st.session_state.tickers:
-                st.session_state.tickers[ticker].update({
-                    "ema_period": int(row['EMA Period']),
-                    "threshold": float(row['Threshold']),
-                    "stop_loss_percent": float(row['Stop Loss %']),
-                    "price_threshold": float(row['Price Threshold'])
-                })
-            else:
-                st.session_state.tickers[ticker] = {
-                    "ema_period": int(row['EMA Period']),
-                    "threshold": float(row['Threshold']),
-                    "stop_loss_percent": float(row['Stop Loss %']),
-                    "price_threshold": float(row['Price Threshold']),
-                    "last_signal": None
-                }
+            try:
+                ema_period = int(row['EMA Period'])
+                threshold = float(row['Threshold'])
+                stop_loss_percent = float(row['Stop Loss %'])
+                price_threshold = float(row['Price Threshold'])
+                
+                if ticker in st.session_state.tickers:
+                    st.session_state.tickers[ticker].update({
+                        "ema_period": ema_period,
+                        "threshold": threshold,
+                        "stop_loss_percent": stop_loss_percent,
+                        "price_threshold": price_threshold
+                    })
+                else:
+                    st.session_state.tickers[ticker] = {
+                        "ema_period": ema_period,
+                        "threshold": threshold,
+                        "stop_loss_percent": stop_loss_percent,
+                        "price_threshold": price_threshold,
+                        "last_signal": None
+                    }
+            except ValueError as e:
+                st.error(f"Error processing row for {ticker}: {str(e)}. Please enter valid numeric values.")
+                error_occurred = True
         
         # Remove deleted tickers
         tickers_to_remove = set(st.session_state.tickers.keys()) - set(edited_df['Ticker'])
         for ticker in tickers_to_remove:
             del st.session_state.tickers[ticker]
         
-        st.success("Watchlist updated successfully!")
+        if not error_occurred:
+            st.success("Watchlist updated successfully!")
+        
         st.experimental_rerun()
 
 else:
