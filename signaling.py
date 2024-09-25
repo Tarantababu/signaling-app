@@ -93,25 +93,27 @@ class SignalGenerator:
 
         return latest_signal, latest_price, latest_ema, latest_deviation
 
-def clear_warning(placeholder, delay):
-    time.sleep(delay)
-    placeholder.empty()
+def show_temporary_message(message, message_type="info", duration=3):
+    placeholder = st.empty()
+    if message_type == "success":
+        placeholder.success(message)
+    elif message_type == "warning":
+        placeholder.warning(message)
+    elif message_type == "error":
+        placeholder.error(message)
+    else:
+        placeholder.info(message)
+    
+    threading.Timer(duration, placeholder.empty).start()
 
 def fetch_data(ticker, period="1d", interval="1m"):
-    warning_placeholder = st.empty()
     try:
         data = yf.download(ticker, period=period, interval=interval)
         if data.empty:
-            warning_message = f"No data available for {ticker}"
-            warning_placeholder.warning(warning_message)
-            
-            threading.Thread(target=clear_warning, args=(warning_placeholder, 3)).start()
+            show_temporary_message(f"No data available for {ticker}", "warning")
         return data
     except Exception as e:
-        error_message = f"Error fetching data for {ticker}: {str(e)}"
-        warning_placeholder.warning(error_message)
-        
-        threading.Thread(target=clear_warning, args=(warning_placeholder, 3)).start()
+        show_temporary_message(f"Error fetching data for {ticker}: {str(e)}", "error")
         return pd.DataFrame()
 
 def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_threshold):
@@ -148,7 +150,7 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
 def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_threshold):
     data = fetch_data(ticker, period="5d", interval="5m")
     if data.empty:
-        st.warning(f"No data available to create chart for {ticker}")
+        show_temporary_message(f"No data available to create chart for {ticker}", "warning")
         return None
     
     # Calculate EMA
@@ -252,9 +254,8 @@ def display_active_signals():
         st.sidebar.info("No active signals at the moment.")
 
 def refresh_signals():
-    progress_bar = st.progress(0)
+    progress_bar = st.empty()
     status_text = st.empty()
-    error_placeholder = st.empty()
     
     total_tickers = len(st.session_state.tickers)
     tickers_to_remove = []
@@ -271,10 +272,7 @@ def refresh_signals():
             st.session_state.tickers[ticker]["last_signal"] = signal_data
         except Exception as e:
             error_message = f"Error updating signal for {ticker}: {str(e)}"
-            error_placeholder.error(error_message)
-            
-            threading.Thread(target=clear_warning, args=(error_placeholder, 3)).start()
-            
+            show_temporary_message(error_message, "error")
             tickers_to_remove.append(ticker)
         
         progress = (i + 1) / total_tickers
@@ -284,9 +282,9 @@ def refresh_signals():
         del st.session_state.tickers[ticker]
     
     if tickers_to_remove:
-        st.warning(f"Removed {len(tickers_to_remove)} ticker(s) due to data fetching errors.")
+        show_temporary_message(f"Removed {len(tickers_to_remove)} ticker(s) due to data fetching errors.", "warning")
     
-    status_text.text("All signals refreshed!")
+    status_text.empty()
     progress_bar.empty()
 
 # CSV Export Function
@@ -317,9 +315,9 @@ def import_watchlist_from_csv(uploaded_file):
                 "last_signal": None,
                 "active_signal": None
             }
-            st.success(f"Imported {len(df)} tickers to the watchlist.")
+        show_temporary_message(f"Imported {len(df)} tickers to the watchlist.", "success")
     except Exception as e:
-        st.error(f"Error importing watchlist: {str(e)}")
+        show_temporary_message(f"Error importing watchlist: {str(e)}", "error")
 
 def main():
     st.title("Signals")
@@ -351,9 +349,9 @@ def main():
                     "active_signal": None
                 }
         if new_ticker_list:
-            st.success(f"Added {', '.join(new_ticker_list)} to the watchlist.")
+            show_temporary_message(f"Added {', '.join(new_ticker_list)} to the watchlist.", "success")
         else:
-            st.warning("No valid tickers entered.")
+            show_temporary_message("No valid tickers entered.", "warning")
 
     # Display Active Signals
     display_active_signals()
@@ -367,6 +365,7 @@ def main():
             file_name="watchlist.csv",
             mime="text/csv"
         )
+        show_temporary_message("Watchlist exported successfully.", "success")
 
     uploaded_file = st.sidebar.file_uploader("Import Watchlist (CSV)", type="csv")
     if uploaded_file is not None:
@@ -378,6 +377,7 @@ def main():
     # Single refresh button for all tickers
     if st.button("Refresh All Signals"):
         refresh_signals()
+        show_temporary_message("All signals refreshed!", "success")
 
     # Display Watchlist Summary
     st.header("Watchlist Summary")
@@ -453,7 +453,7 @@ def main():
                             "active_signal": None
                         }
                 except ValueError as e:
-                    st.error(f"Error processing row for {ticker}: {str(e)}. This ticker will be ignored.")
+                    show_temporary_message(f"Error processing row for {ticker}: {str(e)}. This ticker will be ignored.", "error")
                     if ticker in st.session_state.tickers:
                         del st.session_state.tickers[ticker]
             
@@ -462,7 +462,7 @@ def main():
             for ticker in tickers_to_remove:
                 del st.session_state.tickers[ticker]
             
-            st.success("Watchlist updated successfully!")
+            show_temporary_message("Watchlist updated successfully!", "success")
             st.experimental_rerun()
 
     else:
