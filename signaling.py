@@ -139,11 +139,12 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     
-    # Update active signal if it's a BUY or SELL
+    # Update active signal
     if result["signal"] in ["BUY", "SELL"]:
         st.session_state.tickers[ticker]["active_signal"] = result
     elif result["signal"] and "EXIT" in result["signal"]:
-        st.session_state.tickers[ticker]["active_signal"] = None
+        if st.session_state.tickers[ticker]["active_signal"]:
+            st.session_state.tickers[ticker]["active_signal"] = None
     
     return result
 
@@ -236,16 +237,15 @@ def display_active_signals():
     active_signals = []
     for ticker, ticker_data in st.session_state.tickers.items():
         signal_info = ticker_data.get("active_signal")
-        if signal_info:
-            if signal_info["signal"] in ["BUY", "SELL"]:
-                sl_price = signal_info["price"] * (1 - ticker_data["stop_loss_percent"]/100) if signal_info["signal"] == "BUY" else signal_info["price"] * (1 + ticker_data["stop_loss_percent"]/100)
-                active_signals.append({
-                    "Ticker": ticker,
-                    "Signal": signal_info['signal'],
-                    "Entry": f"{signal_info['price']:.2f}",
-                    "Stop Loss": f"{sl_price:.2f}",
-                    "Timestamp": signal_info['timestamp']
-                })
+        if signal_info and signal_info["signal"] in ["BUY", "SELL"]:
+            sl_price = signal_info["price"] * (1 - ticker_data["stop_loss_percent"]/100) if signal_info["signal"] == "BUY" else signal_info["price"] * (1 + ticker_data["stop_loss_percent"]/100)
+            active_signals.append({
+                "Ticker": ticker,
+                "Signal": signal_info['signal'],
+                "Entry": f"{signal_info['price']:.2f}",
+                "Stop Loss": f"{sl_price:.2f}",
+                "Timestamp": signal_info['timestamp']
+            })
 
     if active_signals:
         df = pd.DataFrame(active_signals)
@@ -286,6 +286,9 @@ def refresh_signals():
     
     status_text.empty()
     progress_bar.empty()
+
+    # Refresh the display of active signals
+    display_active_signals()
 
 # CSV Export Function
 def export_watchlist_to_csv():
@@ -350,6 +353,7 @@ def main():
                 }
         if new_ticker_list:
             show_temporary_message(f"Added {', '.join(new_ticker_list)} to the watchlist.", "success")
+            refresh_signals()  # Refresh signals for the new tickers
         else:
             show_temporary_message("No valid tickers entered.", "warning")
 
@@ -370,6 +374,7 @@ def main():
     uploaded_file = st.sidebar.file_uploader("Import Watchlist (CSV)", type="csv")
     if uploaded_file is not None:
         import_watchlist_from_csv(uploaded_file)
+        refresh_signals()  # Refresh signals for the imported tickers
 
     # Main page
     st.header("3:30 PM to 10:00 PM - 2:30 PM to 9:00 PM")
@@ -463,6 +468,7 @@ def main():
                 del st.session_state.tickers[ticker]
             
             show_temporary_message("Watchlist updated successfully!", "success")
+            refresh_signals()  # Refresh signals after updating the watchlist
             st.experimental_rerun()
 
     else:
@@ -470,3 +476,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+            
