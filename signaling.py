@@ -182,40 +182,35 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
     fig.update_xaxes(rangeslider_visible=False)
     return fig
 
-# Streamlit app
-st.title("Signals")
+def display_active_signals():
+    st.sidebar.header("Active Signals")
+    active_signals = []
+    for ticker, ticker_data in st.session_state.tickers.items():
+        signal_info = ticker_data["last_signal"]
+        if signal_info and signal_info["signal"]:
+            if signal_info["signal"] in ["BUY", "SELL"]:
+                sl_price = signal_info["price"] * (1 - ticker_data["stop_loss_percent"]/100) if signal_info["signal"] == "BUY" else signal_info["price"] * (1 + ticker_data["stop_loss_percent"]/100)
+                active_signals.append({
+                    "Ticker": ticker,
+                    "Signal": signal_info['signal'],
+                    "Entry": f"{signal_info['price']:.2f}",
+                    "Stop Loss": f"{sl_price:.2f}",
+                    "Timestamp": signal_info['timestamp']
+                })
+            elif "EXIT" in signal_info["signal"]:
+                active_signals.append({
+                    "Ticker": ticker,
+                    "Signal": signal_info['signal'],
+                    "Exit": f"{signal_info['price']:.2f}",
+                    "Timestamp": signal_info['timestamp']
+                })
 
-# Initialize session state
-if 'tickers' not in st.session_state:
-    st.session_state.tickers = {}
-if 'selected_ticker' not in st.session_state:
-    st.session_state.selected_ticker = None
-
-# Sidebar for adding new tickers
-st.sidebar.header("Add New Tickers")
-new_tickers = st.sidebar.text_input("Ticker Symbols (comma-separated)").upper()
-ema_period = st.sidebar.number_input("EMA Period", min_value=1, value=20)
-threshold = st.sidebar.number_input("Deviation Threshold", min_value=0.01, value=0.02, format="%.2f")
-stop_loss_percent = st.sidebar.number_input("Stop Loss %", min_value=0.1, value=2.0, format="%.1f")
-price_threshold = st.sidebar.number_input("Price Threshold", min_value=0.001, value=0.005, format="%.3f")
-
-if st.sidebar.button("Add Tickers"):
-    new_ticker_list = [ticker.strip() for ticker in new_tickers.split(',') if ticker.strip()]
-    for new_ticker in new_ticker_list:
-        if new_ticker:
-            st.session_state.tickers[new_ticker] = {
-                "ema_period": ema_period,
-                "threshold": threshold,
-                "stop_loss_percent": stop_loss_percent,
-                "price_threshold": price_threshold,
-                "last_signal": None
-            }
-    if new_ticker_list:
-        st.success(f"Added {', '.join(new_ticker_list)} to the watchlist.")
+    if active_signals:
+        df = pd.DataFrame(active_signals)
+        st.sidebar.dataframe(df, hide_index=True, use_container_width=True)
     else:
-        st.warning("No valid tickers entered.")
+        st.sidebar.info("No active signals at the moment.")
 
-# Function to refresh signals
 def refresh_signals():
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -239,7 +234,7 @@ def refresh_signals():
             error_placeholder.error(error_message)
             
             # Create a new thread to clear the error message after 3 seconds
-            threading.Thread(target=clear_error, args=(error_placeholder, 3)).start()
+            threading.Thread(target=clear_warning, args=(error_placeholder, 3)).start()
             
             # Instead of immediately removing the ticker, add it to a list for later removal
             tickers_to_remove.append(ticker)
@@ -257,123 +252,6 @@ def refresh_signals():
     
     status_text.text("All signals refreshed!")
     progress_bar.empty()
-
-def clear_error(placeholder, delay):
-    time.sleep(delay)
-    placeholder.empty()
-
-# Main page
-st.header("3:30 PM to 10:00 PM - 2:30 PM to 9:00 PM")
-
-# Single refresh button for all tickers
-if st.button("Refresh All Signals"):
-    refresh_signals()
-
-# Display Active Signals
-st.subheader("Active Signals")
-active_signals = []
-for ticker, ticker_data in st.session_state.tickers.items():
-    signal_info = ticker_data["last_signal"]
-    if signal_info and signal_info["signal"]:
-        if signal_info["signal"] in ["BUY", "SELL"]:
-            sl_price = signal_info["price"] * (1 - ticker_data["stop_loss_percent"]/100) if signal_info["signal"] == "BUY" else signal_info["price"] * (1 + ticker_data["stop_loss_percent"]/100)
-            active_signals.append(f"{ticker}, {signal_info['signal']}, entry: {signal_info['price']:.2f} sl: {sl_price:.2f}")
-        elif "EXIT" in signal_info["signal"]:
-            active_signals.append(f"{ticker}, {signal_info['signal']}, exit: {signal_info['price']:.2f}")
-
-if active_signals:
-    for signal in active_signals:
-        st.write(signal)
-else:
-    st.write("No active signals at the moment.")
-
-# Display Watchlist Summary
-st.header("Watchlist Summary")
-
-if st.session_state.tickers:
-    watchlist_data = []
-    for ticker, ticker_data in st.session_state.tickers.items():
-        signal_info = ticker_data["last_signal"] if ticker_data["last_signal"] else {}
-        watchlist_data.append({
-            "Ticker": ticker,
-            "EMA Period": ticker_data["ema_period"],
-            "Threshold": f"{ticker_data['threshold']:.2f}",
-            "Stop Loss %": f"{ticker_data['stop_loss_percent']:.1f}",
-            "Price Threshold": f"{ticker_data['price_threshold']:.3f}",
-            "Last Signal": signal_info.get("signal", "N/A"),
-            "Last Price": f"{signal_info.get('price', 0):.2f}" if signal_info.get('price') else "N/A",
-            "Current EMA": f"{signal_info.get('ema', 0):.2f}" if signal_info.get('ema') else "N/A",
-            "Current Deviation": f"{signal_info.get('deviation', 0):.4f}" if signal_info.get('deviation') is not None else "N/A",
-            "Timestamp": signal_info.get("timestamp", "N/A"),
-        })
-    
-    df = pd.DataFrame(watchlist_data)
-    
-    # Use Streamlit's data editor for inline editing and deletion
-    edited_df = st.data_editor(
-        df,
-        hide_index=True,
-        num_rows="dynamic",
-        key="watchlist_table"
-    )
-    
-    # Create a selectbox for choosing a ticker to display
-    selected_ticker = st.selectbox("Select a ticker to display chart", options=list(st.session_state.tickers.keys()))
-    
-    # Display chart for selected ticker
-    if selected_ticker:
-        st.subheader(f"Chart for {selected_ticker}")
-        ticker_data = st.session_state.tickers[selected_ticker]
-        chart = create_chart(
-            selected_ticker,
-            ticker_data["ema_period"],
-            ticker_data["threshold"],
-            ticker_data["stop_loss_percent"],
-            ticker_data["price_threshold"]
-        )
-        if chart:
-            st.plotly_chart(chart, use_container_width=True)
-    
-    # Process edits and deletions
-    if not df.equals(edited_df):
-        for index, row in edited_df.iterrows():
-            ticker = row['Ticker']
-            try:
-                ema_period = int(row['EMA Period'])
-                threshold = float(row['Threshold'])
-                stop_loss_percent = float(row['Stop Loss %'])
-                price_threshold = float(row['Price Threshold'])
-                
-                if ticker in st.session_state.tickers:
-                    st.session_state.tickers[ticker].update({
-                        "ema_period": ema_period,
-                        "threshold": threshold,
-                        "stop_loss_percent": stop_loss_percent,
-                        "price_threshold": price_threshold
-                    })
-                else:
-                    st.session_state.tickers[ticker] = {
-                        "ema_period": ema_period,
-                        "threshold": threshold,
-                        "stop_loss_percent": stop_loss_percent,
-                        "price_threshold": price_threshold,
-                        "last_signal": None
-                    }
-            except ValueError as e:
-                st.error(f"Error processing row for {ticker}: {str(e)}. This ticker will be ignored.")
-                if ticker in st.session_state.tickers:
-                    del st.session_state.tickers[ticker]
-        
-        # Remove deleted tickers
-        tickers_to_remove = set(st.session_state.tickers.keys()) - set(edited_df['Ticker'])
-        for ticker in tickers_to_remove:
-            del st.session_state.tickers[ticker]
-        
-        st.success("Watchlist updated successfully!")
-        st.experimental_rerun()
-
-else:
-    st.write("No tickers added yet. Use the sidebar to add tickers or import a watchlist.")
 
 # CSV Export Function
 def export_watchlist_to_csv():
@@ -406,21 +284,150 @@ def import_watchlist_from_csv(uploaded_file):
     except Exception as e:
         st.error(f"Error importing watchlist: {str(e)}")
 
-# Export and Import section in the sidebar
-st.sidebar.header("Export/Import Watchlist")
-if st.sidebar.button("Export Watchlist (CSV)"):
-    csv_data = export_watchlist_to_csv()
-    st.sidebar.download_button(
-        label="Download CSV",
-        data=csv_data,
-        file_name="watchlist.csv",
-        mime="text/csv"
-    )
+def main():
+    st.title("Signals")
 
-uploaded_file = st.sidebar.file_uploader("Import Watchlist (CSV)", type="csv")
-if uploaded_file is not None:
-    import_watchlist_from_csv(uploaded_file)
+    # Initialize session state
+    if 'tickers' not in st.session_state:
+        st.session_state.tickers = {}
+    if 'selected_ticker' not in st.session_state:
+        st.session_state.selected_ticker = None
 
-# Run the app
+    # Sidebar for adding new tickers
+    st.sidebar.header("Add New Tickers")
+    new_tickers = st.sidebar.text_input("Ticker Symbols (comma-separated)").upper()
+    ema_period = st.sidebar.number_input("EMA Period", min_value=1, value=20)
+    threshold = st.sidebar.number_input("Deviation Threshold", min_value=0.01, value=0.02, format="%.2f")
+    stop_loss_percent = st.sidebar.number_input("Stop Loss %", min_value=0.1, value=2.0, format="%.1f")
+    price_threshold = st.sidebar.number_input("Price Threshold", min_value=0.001, value=0.005, format="%.3f")
+
+    if st.sidebar.button("Add Tickers"):
+        new_ticker_list = [ticker.strip() for ticker in new_tickers.split(',') if ticker.strip()]
+        for new_ticker in new_ticker_list:
+            if new_ticker:
+                st.session_state.tickers[new_ticker] = {
+                    "ema_period": ema_period,
+                    "threshold": threshold,
+                    "stop_loss_percent": stop_loss_percent,
+                    "price_threshold": price_threshold,
+                    "last_signal": None
+                }
+        if new_ticker_list:
+            st.success(f"Added {', '.join(new_ticker_list)} to the watchlist.")
+        else:
+            st.warning("No valid tickers entered.")
+
+    # Display Active Signals
+    display_active_signals()
+
+    # Export and Import section in the sidebar (continued)
+    if st.sidebar.button("Export Watchlist (CSV)"):
+        csv_data = export_watchlist_to_csv()
+        st.sidebar.download_button(
+            label="Download CSV",
+            data=csv_data,
+            file_name="watchlist.csv",
+            mime="text/csv"
+        )
+
+    uploaded_file = st.sidebar.file_uploader("Import Watchlist (CSV)", type="csv")
+    if uploaded_file is not None:
+        import_watchlist_from_csv(uploaded_file)
+
+    # Main page
+    st.header("3:30 PM to 10:00 PM - 2:30 PM to 9:00 PM")
+
+    # Single refresh button for all tickers
+    if st.button("Refresh All Signals"):
+        refresh_signals()
+
+    # Display Watchlist Summary
+    st.header("Watchlist Summary")
+
+    if st.session_state.tickers:
+        watchlist_data = []
+        for ticker, ticker_data in st.session_state.tickers.items():
+            signal_info = ticker_data["last_signal"] if ticker_data["last_signal"] else {}
+            watchlist_data.append({
+                "Ticker": ticker,
+                "EMA Period": ticker_data["ema_period"],
+                "Threshold": f"{ticker_data['threshold']:.2f}",
+                "Stop Loss %": f"{ticker_data['stop_loss_percent']:.1f}",
+                "Price Threshold": f"{ticker_data['price_threshold']:.3f}",
+                "Last Signal": signal_info.get("signal", "N/A"),
+                "Last Price": f"{signal_info.get('price', 0):.2f}" if signal_info.get('price') else "N/A",
+                "Current EMA": f"{signal_info.get('ema', 0):.2f}" if signal_info.get('ema') else "N/A",
+                "Current Deviation": f"{signal_info.get('deviation', 0):.4f}" if signal_info.get('deviation') is not None else "N/A",
+                "Timestamp": signal_info.get("timestamp", "N/A"),
+            })
+        
+        df = pd.DataFrame(watchlist_data)
+        
+        # Use Streamlit's data editor for inline editing and deletion
+        edited_df = st.data_editor(
+            df,
+            hide_index=True,
+            num_rows="dynamic",
+            key="watchlist_table"
+        )
+        
+        # Create a selectbox for choosing a ticker to display
+        selected_ticker = st.selectbox("Select a ticker to display chart", options=list(st.session_state.tickers.keys()))
+        
+        # Display chart for selected ticker
+        if selected_ticker:
+            st.subheader(f"Chart for {selected_ticker}")
+            ticker_data = st.session_state.tickers[selected_ticker]
+            chart = create_chart(
+                selected_ticker,
+                ticker_data["ema_period"],
+                ticker_data["threshold"],
+                ticker_data["stop_loss_percent"],
+                ticker_data["price_threshold"]
+            )
+            if chart:
+                st.plotly_chart(chart, use_container_width=True)
+        
+        # Process edits and deletions
+        if not df.equals(edited_df):
+            for index, row in edited_df.iterrows():
+                ticker = row['Ticker']
+                try:
+                    ema_period = int(row['EMA Period'])
+                    threshold = float(row['Threshold'])
+                    stop_loss_percent = float(row['Stop Loss %'])
+                    price_threshold = float(row['Price Threshold'])
+                    
+                    if ticker in st.session_state.tickers:
+                        st.session_state.tickers[ticker].update({
+                            "ema_period": ema_period,
+                            "threshold": threshold,
+                            "stop_loss_percent": stop_loss_percent,
+                            "price_threshold": price_threshold
+                        })
+                    else:
+                        st.session_state.tickers[ticker] = {
+                            "ema_period": ema_period,
+                            "threshold": threshold,
+                            "stop_loss_percent": stop_loss_percent,
+                            "price_threshold": price_threshold,
+                            "last_signal": None
+                        }
+                except ValueError as e:
+                    st.error(f"Error processing row for {ticker}: {str(e)}. This ticker will be ignored.")
+                    if ticker in st.session_state.tickers:
+                        del st.session_state.tickers[ticker]
+            
+            # Remove deleted tickers
+            tickers_to_remove = set(st.session_state.tickers.keys()) - set(edited_df['Ticker'])
+            for ticker in tickers_to_remove:
+                del st.session_state.tickers[ticker]
+            
+            st.success("Watchlist updated successfully!")
+            st.experimental_rerun()
+
+    else:
+        st.write("No tickers added yet. Use the sidebar to add tickers or import a watchlist.")
+
 if __name__ == "__main__":
-    pass
+    main()
