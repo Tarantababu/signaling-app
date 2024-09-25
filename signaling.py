@@ -49,12 +49,12 @@ class SignalGenerator:
             if position['direction'] == 'long':
                 if current_price <= position['entry_ema'] * (1 - self.stop_loss_percent / 100):
                     self.exit_trade(position, current_price, current_ema, index, 'Stop Loss')
-                elif current_price >= position['entry_ema'] * (1 + self.threshold):
+                elif current_price >= position['entry_ema']:
                     self.exit_trade(position, current_price, current_ema, index, 'Take Profit')
             else:  # short position
                 if current_price >= position['entry_ema'] * (1 + self.stop_loss_percent / 100):
                     self.exit_trade(position, current_price, current_ema, index, 'Stop Loss')
-                elif current_price <= position['entry_ema'] * (1 - self.threshold):
+                elif current_price <= position['entry_ema']:
                     self.exit_trade(position, current_price, current_ema, index, 'Take Profit')
 
     def exit_trade(self, position, current_price, current_ema, index, reason):
