@@ -105,14 +105,12 @@ def fetch_data(ticker, period="1d", interval="1m"):
             warning_message = f"No data available for {ticker}"
             warning_placeholder.warning(warning_message)
             
-            # Create a new thread to clear the warning message after 3 seconds
             threading.Thread(target=clear_warning, args=(warning_placeholder, 3)).start()
         return data
     except Exception as e:
         error_message = f"Error fetching data for {ticker}: {str(e)}"
         warning_placeholder.warning(error_message)
         
-        # Create a new thread to clear the error message after 3 seconds
         threading.Thread(target=clear_warning, args=(warning_placeholder, 3)).start()
         return pd.DataFrame()
 
@@ -129,7 +127,8 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
     signal, price, ema, deviation = generator.generate_signal(data)
-    return {
+    
+    result = {
         "ticker": ticker,
         "signal": signal['signal'] if signal else None,
         "price": price,
@@ -137,6 +136,14 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
         "deviation": deviation,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
+    
+    # Update active signal if it's a BUY or SELL
+    if result["signal"] in ["BUY", "SELL"]:
+        st.session_state.tickers[ticker]["active_signal"] = result
+    elif result["signal"] and "EXIT" in result["signal"]:
+        st.session_state.tickers[ticker]["active_signal"] = None
+    
+    return result
 
 def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_threshold):
     data = fetch_data(ticker, period="5d", interval="5m")
@@ -226,8 +233,8 @@ def display_active_signals():
     st.sidebar.header("Active Signals")
     active_signals = []
     for ticker, ticker_data in st.session_state.tickers.items():
-        signal_info = ticker_data["last_signal"]
-        if signal_info and signal_info["signal"]:
+        signal_info = ticker_data.get("active_signal")
+        if signal_info:
             if signal_info["signal"] in ["BUY", "SELL"]:
                 sl_price = signal_info["price"] * (1 - ticker_data["stop_loss_percent"]/100) if signal_info["signal"] == "BUY" else signal_info["price"] * (1 + ticker_data["stop_loss_percent"]/100)
                 active_signals.append({
@@ -235,13 +242,6 @@ def display_active_signals():
                     "Signal": signal_info['signal'],
                     "Entry": f"{signal_info['price']:.2f}",
                     "Stop Loss": f"{sl_price:.2f}",
-                    "Timestamp": signal_info['timestamp']
-                })
-            elif "EXIT" in signal_info["signal"]:
-                active_signals.append({
-                    "Ticker": ticker,
-                    "Signal": signal_info['signal'],
-                    "Exit": f"{signal_info['price']:.2f}",
                     "Timestamp": signal_info['timestamp']
                 })
 
@@ -273,17 +273,13 @@ def refresh_signals():
             error_message = f"Error updating signal for {ticker}: {str(e)}"
             error_placeholder.error(error_message)
             
-            # Create a new thread to clear the error message after 3 seconds
             threading.Thread(target=clear_warning, args=(error_placeholder, 3)).start()
             
-            # Instead of immediately removing the ticker, add it to a list for later removal
             tickers_to_remove.append(ticker)
         
-        # Update progress
         progress = (i + 1) / total_tickers
         progress_bar.progress(progress)
     
-    # Remove tickers that encountered errors
     for ticker in tickers_to_remove:
         del st.session_state.tickers[ticker]
     
@@ -315,12 +311,13 @@ def import_watchlist_from_csv(uploaded_file):
             ticker = row['Ticker']
             st.session_state.tickers[ticker] = {
                 "ema_period": int(row['EMA Period']),
-            "threshold": float(row['Threshold']),
+                "threshold": float(row['Threshold']),
                 "stop_loss_percent": float(row['Stop Loss %']),
                 "price_threshold": float(row['Price Threshold']),
-                "last_signal": None
+                "last_signal": None,
+                "active_signal": None
             }
-        st.success(f"Imported {len(df)} tickers to the watchlist.")
+            st.success(f"Imported {len(df)} tickers to the watchlist.")
     except Exception as e:
         st.error(f"Error importing watchlist: {str(e)}")
 
@@ -350,7 +347,8 @@ def main():
                     "threshold": threshold,
                     "stop_loss_percent": stop_loss_percent,
                     "price_threshold": price_threshold,
-                    "last_signal": None
+                    "last_signal": None,
+                    "active_signal": None
                 }
         if new_ticker_list:
             st.success(f"Added {', '.join(new_ticker_list)} to the watchlist.")
@@ -451,7 +449,8 @@ def main():
                             "threshold": threshold,
                             "stop_loss_percent": stop_loss_percent,
                             "price_threshold": price_threshold,
-                            "last_signal": None
+                            "last_signal": None,
+                            "active_signal": None
                         }
                 except ValueError as e:
                     st.error(f"Error processing row for {ticker}: {str(e)}. This ticker will be ignored.")
