@@ -5,6 +5,8 @@ import pandas_ta as ta
 from datetime import datetime, timedelta
 import csv
 import io
+import time
+import threading
 
 # Suppress warnings
 import warnings
@@ -101,6 +103,7 @@ if st.sidebar.button("Add Tickers"):
 def refresh_signals():
     progress_bar = st.progress(0)
     status_text = st.empty()
+    error_placeholder = st.empty()
     
     total_tickers = len(st.session_state.tickers)
     for i, (ticker, ticker_data) in enumerate(st.session_state.tickers.items()):
@@ -115,7 +118,11 @@ def refresh_signals():
             )
             st.session_state.tickers[ticker]["last_signal"] = signal_data
         except Exception as e:
-            st.error(f"Error updating signal for {ticker}: {str(e)}")
+            error_message = f"Error updating signal for {ticker}: {str(e)}"
+            error_placeholder.error(error_message)
+            
+            # Create a new thread to clear the error message after 3 seconds
+            threading.Thread(target=clear_error, args=(error_placeholder, 3)).start()
         
         # Update progress
         progress = (i + 1) / total_tickers
@@ -123,6 +130,10 @@ def refresh_signals():
     
     status_text.text("All signals refreshed!")
     progress_bar.empty()
+
+def clear_error(placeholder, delay):
+    time.sleep(delay)
+    placeholder.empty()
 
 # Main page
 st.header("3:30 PM to 10:00 PM - 2:30 PM to 9:00 PM")
