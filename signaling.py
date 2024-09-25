@@ -200,6 +200,11 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
     fig.add_hline(y=threshold, line_dash="dash", line_color="green", row=2, col=1)
     fig.add_hline(y=-threshold, line_dash="dash", line_color="red", row=2, col=1)
     
+    # Add vertical lines for time separation
+    time_intervals = pd.date_range(start=price_based_df.index.min(), end=price_based_df.index.max(), freq='D')
+    for time in time_intervals:
+        fig.add_vline(x=time, line_width=1, line_dash="dash", line_color="rgba(100,100,100,0.2)", row="all")
+
     # Signals
     for i in range(1, len(price_based_df)):
         if abs(price_based_df['Deviation'].iloc[i]) > threshold:
@@ -377,7 +382,7 @@ def main():
         refresh_signals()  # Refresh signals for the imported tickers
 
     # Main page
-    st.header("....")
+    st.header("3:30 PM to 10:00 PM - 2:30 PM to 9:00 PM")
 
     # Single refresh button for all tickers
     if st.button("Refresh All Signals"):
@@ -476,4 +481,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-            
