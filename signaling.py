@@ -93,14 +93,27 @@ class SignalGenerator:
 
         return latest_signal, latest_price, latest_ema, latest_deviation
 
+def clear_warning(placeholder, delay):
+    time.sleep(delay)
+    placeholder.empty()
+
 def fetch_data(ticker, period="1d", interval="1m"):
+    warning_placeholder = st.empty()
     try:
         data = yf.download(ticker, period=period, interval=interval)
         if data.empty:
-            st.warning(f"No data available for {ticker}")
+            warning_message = f"No data available for {ticker}"
+            warning_placeholder.warning(warning_message)
+            
+            # Create a new thread to clear the warning message after 3 seconds
+            threading.Thread(target=clear_warning, args=(warning_placeholder, 3)).start()
         return data
     except Exception as e:
-        st.warning(f"Error fetching data for {ticker}: {str(e)}")
+        error_message = f"Error fetching data for {ticker}: {str(e)}"
+        warning_placeholder.warning(error_message)
+        
+        # Create a new thread to clear the error message after 3 seconds
+        threading.Thread(target=clear_warning, args=(warning_placeholder, 3)).start()
         return pd.DataFrame()
 
 def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_threshold):
