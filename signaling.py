@@ -68,6 +68,8 @@ class SignalGenerator:
         })
 
     def generate_signal(self, data):
+        if data.empty:
+            return None, None, None, None
         ema_series = self.calculate_ema(data)
         signals = []
 
@@ -95,14 +97,24 @@ def fetch_data(ticker, period="1d", interval="1m"):
     try:
         data = yf.download(ticker, period=period, interval=interval)
         if data.empty:
-            raise ValueError(f"No data available for {ticker}")
+            st.warning(f"No data available for {ticker}")
         return data
     except Exception as e:
-        raise ValueError(f"Error fetching data for {ticker}: {str(e)}")
+        st.warning(f"Error fetching data for {ticker}: {str(e)}")
+        return pd.DataFrame()
 
 def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_threshold):
     generator = SignalGenerator(ticker, ema_period, threshold, stop_loss_percent, price_threshold)
     data = fetch_data(ticker)
+    if data.empty:
+        return {
+            "ticker": ticker,
+            "signal": None,
+            "price": None,
+            "ema": None,
+            "deviation": None,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
     signal, price, ema, deviation = generator.generate_signal(data)
     return {
         "ticker": ticker,
@@ -115,6 +127,9 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
 
 def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_threshold):
     data = fetch_data(ticker, period="5d", interval="5m")
+    if data.empty:
+        st.warning(f"No data available to create chart for {ticker}")
+        return None
     generator = SignalGenerator(ticker, ema_period, threshold, stop_loss_percent, price_threshold)
     ema = generator.calculate_ema(data)
     
@@ -194,6 +209,7 @@ def refresh_signals():
     error_placeholder = st.empty()
     
     total_tickers = len(st.session_state.tickers)
+    tickers_to_remove = []
     for i, (ticker, ticker_data) in enumerate(st.session_state.tickers.items()):
         status_text.text(f"Refreshing signal for {ticker}...")
         try:
@@ -212,12 +228,19 @@ def refresh_signals():
             # Create a new thread to clear the error message after 3 seconds
             threading.Thread(target=clear_error, args=(error_placeholder, 3)).start()
             
-            # Remove the ticker with error from the watchlist
-            del st.session_state.tickers[ticker]
+            # Instead of immediately removing the ticker, add it to a list for later removal
+            tickers_to_remove.append(ticker)
         
         # Update progress
         progress = (i + 1) / total_tickers
         progress_bar.progress(progress)
+    
+    # Remove tickers that encountered errors
+    for ticker in tickers_to_remove:
+        del st.session_state.tickers[ticker]
+    
+    if tickers_to_remove:
+        st.warning(f"Removed {len(tickers_to_remove)} ticker(s) due to data fetching errors.")
     
     status_text.text("All signals refreshed!")
     progress_bar.empty()
@@ -295,7 +318,8 @@ if st.session_state.tickers:
             ticker_data["stop_loss_percent"],
             ticker_data["price_threshold"]
         )
-        st.plotly_chart(chart, use_container_width=True)
+        if chart:
+            st.plotly_chart(chart, use_container_width=True)
     
     # Process edits and deletions
     if not df.equals(edited_df):
