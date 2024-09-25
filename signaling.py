@@ -27,7 +27,7 @@ class SignalGenerator:
 
     def generate_signal(self, data):
         if data.empty:
-            return None, None
+            return None, None, None, None
 
         latest_ema = self.calculate_ema(data)
         latest_close = data['Close'].iloc[-1]
@@ -42,7 +42,7 @@ class SignalGenerator:
                 else:
                     signal = "SELL"
 
-        return signal, latest_close
+        return signal, latest_close, latest_ema, deviation
 
 def fetch_data(ticker, period="1d", interval="1m"):
     try:
@@ -56,11 +56,13 @@ def fetch_data(ticker, period="1d", interval="1m"):
 def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_threshold):
     generator = SignalGenerator(ticker, ema_period, threshold, stop_loss_percent, price_threshold)
     data = fetch_data(ticker)
-    signal, price = generator.generate_signal(data)
+    signal, price, ema, deviation = generator.generate_signal(data)
     return {
         "ticker": ticker,
         "signal": signal,
         "price": price,
+        "ema": ema,
+        "deviation": deviation,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 
@@ -144,6 +146,8 @@ if st.session_state.tickers:
             "Price Threshold": f"{ticker_data['price_threshold']:.3f}",
             "Last Signal": signal_info.get("signal", "N/A"),
             "Last Price": f"{signal_info.get('price', 0):.2f}" if signal_info.get('price') else "N/A",
+            "Current EMA": f"{signal_info.get('ema', 0):.2f}" if signal_info.get('ema') else "N/A",
+            "Current Deviation": f"{signal_info.get('deviation', 0):.4f}" if signal_info.get('deviation') is not None else "N/A",
             "Timestamp": signal_info.get("timestamp", "N/A"),
             "Actions": ticker
         })
