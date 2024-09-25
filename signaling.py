@@ -3,6 +3,8 @@ import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 from datetime import datetime, timedelta
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import csv
 import io
 import time
@@ -112,12 +114,55 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 
+def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_threshold):
+    data = fetch_data(ticker, period="5d", interval="5m")
+    generator = SignalGenerator(ticker, ema_period, threshold, stop_loss_percent, price_threshold)
+    ema = generator.calculate_ema(data)
+    
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
+                        vertical_spacing=0.03, subplot_titles=(f'{ticker} Price and EMA', 'Deviation'),
+                        row_heights=[0.7, 0.3])
+    
+    # Price and EMA
+    fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'],
+                                 low=data['Low'], close=data['Close'], name='Price'),
+                  row=1, col=1)
+    fig.add_trace(go.Scatter(x=data.index, y=ema, name=f'EMA-{ema_period}', line=dict(color='orange')),
+                  row=1, col=1)
+    
+    # Deviation
+    deviation = (data['Close'] - ema) / ema
+    fig.add_trace(go.Scatter(x=data.index, y=deviation, name='Deviation', line=dict(color='purple')),
+                  row=2, col=1)
+    fig.add_hline(y=threshold, line_dash="dash", line_color="green", row=2, col=1)
+    fig.add_hline(y=-threshold, line_dash="dash", line_color="red", row=2, col=1)
+    
+    # Signals
+    for i in range(len(data)):
+        if abs(deviation[i]) > threshold:
+            if deviation[i] < 0:
+                fig.add_trace(go.Scatter(x=[data.index[i]], y=[data['Low'][i]], mode='markers',
+                                         marker=dict(symbol='triangle-up', size=10, color='green'),
+                                         name='Buy Signal'),
+                              row=1, col=1)
+            else:
+                fig.add_trace(go.Scatter(x=[data.index[i]], y=[data['High'][i]], mode='markers',
+                                         marker=dict(symbol='triangle-down', size=10, color='red'),
+                                         name='Sell Signal'),
+                              row=1, col=1)
+    
+    fig.update_layout(height=800, title_text=f"{ticker} Analysis")
+    fig.update_xaxes(rangeslider_visible=False)
+    return fig
+
 # Streamlit app
 st.title("Signals")
 
 # Initialize session state
 if 'tickers' not in st.session_state:
     st.session_state.tickers = {}
+if 'selected_ticker' not in st.session_state:
+    st.session_state.selected_ticker = None
 
 # Sidebar for adding new tickers
 st.sidebar.header("Add New Tickers")
@@ -167,6 +212,9 @@ def refresh_signals():
             
             # Create a new thread to clear the error message after 3 seconds
             threading.Thread(target=clear_error, args=(error_placeholder, 3)).start()
+            
+            # Remove the ticker with error from the watchlist
+            del st.session_state.tickers[ticker]
         
         # Update progress
         progress = (i + 1) / total_tickers
@@ -186,6 +234,24 @@ st.header("3:30 PM to 10:00 PM - 2:30 PM to 9:00 PM")
 if st.button("Refresh All Signals"):
     refresh_signals()
 
+# Display Active Signals
+st.subheader("Active Signals")
+active_signals = []
+for ticker, ticker_data in st.session_state.tickers.items():
+    signal_info = ticker_data["last_signal"]
+    if signal_info and signal_info["signal"]:
+        if signal_info["signal"] in ["BUY", "SELL"]:
+            sl_price = signal_info["price"] * (1 - ticker_data["stop_loss_percent"]/100) if signal_info["signal"] == "BUY" else signal_info["price"] * (1 + ticker_data["stop_loss_percent"]/100)
+            active_signals.append(f"{ticker}, {signal_info['signal']}, entry: {signal_info['price']:.2f} sl: {sl_price:.2f}")
+        elif "EXIT" in signal_info["signal"]:
+            active_signals.append(f"{ticker}, {signal_info['signal']}, exit: {signal_info['price']:.2f}")
+
+if active_signals:
+    for signal in active_signals:
+        st.write(signal)
+else:
+    st.write("No active signals at the moment.")
+
 # Display Watchlist Summary
 st.header("Watchlist Summary")
 
@@ -204,7 +270,6 @@ if st.session_state.tickers:
             "Current EMA": f"{signal_info.get('ema', 0):.2f}" if signal_info.get('ema') else "N/A",
             "Current Deviation": f"{signal_info.get('deviation', 0):.4f}" if signal_info.get('deviation') is not None else "N/A",
             "Timestamp": signal_info.get("timestamp", "N/A"),
-            "Actions": ticker
         })
     
     df = pd.DataFrame(watchlist_data)
@@ -212,21 +277,30 @@ if st.session_state.tickers:
     # Use Streamlit's data editor for inline editing and deletion
     edited_df = st.data_editor(
         df,
-        column_config={
-            "Actions": st.column_config.Column(
-                "Actions",
-                width="medium",
-                help="Edit or delete this ticker",
-                disabled=True,
-            )
-        },
         hide_index=True,
-        num_rows="dynamic"
+        num_rows="dynamic",
+        key="watchlist_table"
     )
+    
+    # Check if a row is clicked
+    if st.session_state.watchlist_table["edited_rows"]:
+        clicked_row = list(st.session_state.watchlist_table["edited_rows"].keys())[0]
+        st.session_state.selected_ticker = edited_df.iloc[clicked_row]["Ticker"]
+    
+    # Display chart for selected ticker
+    if st.session_state.selected_ticker:
+        ticker_data = st.session_state.tickers[st.session_state.selected_ticker]
+        chart = create_chart(
+            st.session_state.selected_ticker,
+            ticker_data["ema_period"],
+            ticker_data["threshold"],
+            ticker_data["stop_loss_percent"],
+            ticker_data["price_threshold"]
+        )
+        st.plotly_chart(chart, use_container_width=True)
     
     # Process edits and deletions
     if not df.equals(edited_df):
-        error_occurred = False
         for index, row in edited_df.iterrows():
             ticker = row['Ticker']
             try:
@@ -251,17 +325,16 @@ if st.session_state.tickers:
                         "last_signal": None
                     }
             except ValueError as e:
-                st.error(f"Error processing row for {ticker}: {str(e)}. Please enter valid numeric values.")
-                error_occurred = True
+                st.error(f"Error processing row for {ticker}: {str(e)}. This ticker will be ignored.")
+                if ticker in st.session_state.tickers:
+                    del st.session_state.tickers[ticker]
         
         # Remove deleted tickers
         tickers_to_remove = set(st.session_state.tickers.keys()) - set(edited_df['Ticker'])
         for ticker in tickers_to_remove:
             del st.session_state.tickers[ticker]
         
-        if not error_occurred:
-            st.success("Watchlist updated successfully!")
-        
+        st.success("Watchlist updated successfully!")
         st.experimental_rerun()
 
 else:
