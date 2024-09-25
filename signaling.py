@@ -377,7 +377,7 @@ def main():
         refresh_signals()  # Refresh signals for the imported tickers
 
     # Main page
-    st.header("3:30 PM to 10:00 PM - 2:30 PM to 9:00 PM")
+    st.header("....")
 
     # Single refresh button for all tickers
     if st.button("Refresh All Signals"):
