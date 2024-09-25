@@ -281,16 +281,15 @@ if st.session_state.tickers:
         key="watchlist_table"
     )
     
-    # Check if a row is clicked
-    if st.session_state.watchlist_table["edited_rows"]:
-        clicked_row = list(st.session_state.watchlist_table["edited_rows"].keys())[0]
-        st.session_state.selected_ticker = edited_df.iloc[clicked_row]["Ticker"]
+    # Create a selectbox for choosing a ticker to display
+    selected_ticker = st.selectbox("Select a ticker to display chart", options=list(st.session_state.tickers.keys()))
     
     # Display chart for selected ticker
-    if st.session_state.selected_ticker:
-        ticker_data = st.session_state.tickers[st.session_state.selected_ticker]
+    if selected_ticker:
+        st.subheader(f"Chart for {selected_ticker}")
+        ticker_data = st.session_state.tickers[selected_ticker]
         chart = create_chart(
-            st.session_state.selected_ticker,
+            selected_ticker,
             ticker_data["ema_period"],
             ticker_data["threshold"],
             ticker_data["stop_loss_percent"],
