@@ -71,7 +71,7 @@ class SignalGenerator:
         if data.empty:
             return None, None, None, None
         ema_series = self.calculate_ema(data)
-        signals = []
+        self.signals = []  # Reset signals
 
         for i in range(len(data)):
             price = data['Close'].iloc[i]
@@ -164,19 +164,28 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
     fig.add_hline(y=threshold, line_dash="dash", line_color="green", row=2, col=1)
     fig.add_hline(y=-threshold, line_dash="dash", line_color="red", row=2, col=1)
     
-    # Signals
-    for i in range(len(data)):
-        if abs(deviation.iloc[i]) > threshold:
-            if deviation.iloc[i] < 0:
-                fig.add_trace(go.Scatter(x=[data.index[i]], y=[data['Low'].iloc[i]], mode='markers',
-                                         marker=dict(symbol='triangle-up', size=10, color='green'),
-                                         name='Buy Signal'),
-                              row=1, col=1)
-            else:
-                fig.add_trace(go.Scatter(x=[data.index[i]], y=[data['High'].iloc[i]], mode='markers',
-                                         marker=dict(symbol='triangle-down', size=10, color='red'),
-                                         name='Sell Signal'),
-                              row=1, col=1)
+    # Generate signals
+    generator.generate_signal(data)
+    
+    # Plot signals
+    for signal in generator.signals:
+        if signal['signal'] == 'BUY':
+            fig.add_trace(go.Scatter(x=[data.index[signal['index']]], y=[data['Low'].iloc[signal['index']]], 
+                                     mode='markers', marker=dict(symbol='triangle-up', size=10, color='green'),
+                                     name='Buy Signal'),
+                          row=1, col=1)
+        elif signal['signal'] == 'SELL':
+            fig.add_trace(go.Scatter(x=[data.index[signal['index']]], y=[data['High'].iloc[signal['index']]], 
+                                     mode='markers', marker=dict(symbol='triangle-down', size=10, color='red'),
+                                     name='Sell Signal'),
+                          row=1, col=1)
+        elif 'EXIT' in signal['signal']:
+            color = 'red' if 'LONG' in signal['signal'] else 'green'
+            symbol = 'circle' if signal['reason'] == 'Take Profit' else 'x'
+            fig.add_trace(go.Scatter(x=[data.index[signal['index']]], y=[signal['price']], 
+                                     mode='markers', marker=dict(symbol=symbol, size=8, color=color),
+                                     name=f'Exit {signal["reason"]}'),
+                          row=1, col=1)
     
     fig.update_layout(height=800, title_text=f"{ticker} Analysis")
     fig.update_xaxes(rangeslider_visible=False)
@@ -311,7 +320,7 @@ def main():
                     "stop_loss_percent": stop_loss_percent,
                     "price_threshold": price_threshold,
                     "last_signal": None
-                }
+    }
         if new_ticker_list:
             st.success(f"Added {', '.join(new_ticker_list)} to the watchlist.")
         else:
@@ -320,7 +329,7 @@ def main():
     # Display Active Signals
     display_active_signals()
 
-    # Export and Import section in the sidebar (continued)
+    # Export and Import section in the sidebar
     if st.sidebar.button("Export Watchlist (CSV)"):
         csv_data = export_watchlist_to_csv()
         st.sidebar.download_button(
