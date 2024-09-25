@@ -71,7 +71,7 @@ class SignalGenerator:
         if data.empty:
             return None, None, None, None
         ema_series = self.calculate_ema(data)
-        self.signals = []  # Reset signals
+        signals = []
 
         for i in range(len(data)):
             price = data['Close'].iloc[i]
@@ -143,51 +143,82 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
     if data.empty:
         st.warning(f"No data available to create chart for {ticker}")
         return None
-    generator = SignalGenerator(ticker, ema_period, threshold, stop_loss_percent, price_threshold)
-    ema = generator.calculate_ema(data)
     
+    # Calculate EMA
+    ema = calculate_ema(data['Close'], ema_period)
+    
+    # Create price-based candles
+    price_based_data = []
+    current_candle = data.iloc[0].copy()
+    last_price = current_candle['Close']
+
+    for i in range(1, len(data)):
+        row = data.iloc[i]
+        price_change = abs(row['Close'] - last_price) / last_price
+        if price_change >= price_threshold:
+            current_candle['EMA'] = ema.iloc[i-1]
+            price_based_data.append(current_candle)
+            current_candle = row.copy()
+            last_price = row['Close']
+        else:
+            current_candle['High'] = max(current_candle['High'], row['High'])
+            current_candle['Low'] = min(current_candle['Low'], row['Low'])
+            current_candle['Close'] = row['Close']
+            current_candle['Volume'] += row['Volume']
+
+    current_candle['EMA'] = ema.iloc[-1]
+    price_based_data.append(current_candle)
+    price_based_df = pd.DataFrame(price_based_data)
+
+    # Calculate deviation
+    price_based_df['Deviation'] = (price_based_df['Close'] - price_based_df['EMA']) / price_based_df['EMA']
+
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                        vertical_spacing=0.03, subplot_titles=(f'{ticker} Price and EMA', 'Deviation'),
+                        vertical_spacing=0.03, subplot_titles=(f'{ticker} Price-Based Candles and EMA', 'Deviation'),
                         row_heights=[0.7, 0.3])
     
-    # Price and EMA
-    fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'],
-                                 low=data['Low'], close=data['Close'], name='Price'),
+    # Price-based candles and EMA
+    fig.add_trace(go.Candlestick(x=price_based_df.index, open=price_based_df['Open'], high=price_based_df['High'],
+                                 low=price_based_df['Low'], close=price_based_df['Close'], name='Price'),
                   row=1, col=1)
-    fig.add_trace(go.Scatter(x=data.index, y=ema, name=f'EMA-{ema_period}', line=dict(color='orange')),
+    fig.add_trace(go.Scatter(x=price_based_df.index, y=price_based_df['EMA'], name=f'EMA-{ema_period}', line=dict(color='orange')),
                   row=1, col=1)
     
     # Deviation
-    deviation = (data['Close'] - ema) / ema
-    fig.add_trace(go.Scatter(x=data.index, y=deviation, name='Deviation', line=dict(color='purple')),
+    fig.add_trace(go.Scatter(x=price_based_df.index, y=price_based_df['Deviation'], name='Deviation', line=dict(color='purple')),
                   row=2, col=1)
     fig.add_hline(y=threshold, line_dash="dash", line_color="green", row=2, col=1)
     fig.add_hline(y=-threshold, line_dash="dash", line_color="red", row=2, col=1)
     
-    # Generate signals
-    generator.generate_signal(data)
-    
-    # Plot signals
-    for signal in generator.signals:
-        if signal['signal'] == 'BUY':
-            fig.add_trace(go.Scatter(x=[data.index[signal['index']]], y=[data['Low'].iloc[signal['index']]], 
-                                     mode='markers', marker=dict(symbol='triangle-up', size=10, color='green'),
-                                     name='Buy Signal'),
+    # Signals
+    for i in range(1, len(price_based_df)):
+        if abs(price_based_df['Deviation'].iloc[i]) > threshold:
+            if price_based_df['Deviation'].iloc[i] < 0:
+                fig.add_trace(go.Scatter(x=[price_based_df.index[i]], y=[price_based_df['Low'].iloc[i]], mode='markers',
+                                         marker=dict(symbol='triangle-up', size=10, color='green'),
+                                         name='Buy Signal'),
+                              row=1, col=1)
+            else:
+                fig.add_trace(go.Scatter(x=[price_based_df.index[i]], y=[price_based_df['High'].iloc[i]], mode='markers',
+                                         marker=dict(symbol='triangle-down', size=10, color='red'),
+                                         name='Sell Signal'),
+                              row=1, col=1)
+
+        # Exit signals when price hits EMA
+        if (price_based_df['Close'].iloc[i-1] < price_based_df['EMA'].iloc[i-1] and 
+            price_based_df['Close'].iloc[i] >= price_based_df['EMA'].iloc[i]):
+            fig.add_trace(go.Scatter(x=[price_based_df.index[i]], y=[price_based_df['High'].iloc[i]], mode='markers',
+                                     marker=dict(symbol='square', size=8, color='blue'),
+                                     name='Long Exit'),
                           row=1, col=1)
-        elif signal['signal'] == 'SELL':
-            fig.add_trace(go.Scatter(x=[data.index[signal['index']]], y=[data['High'].iloc[signal['index']]], 
-                                     mode='markers', marker=dict(symbol='triangle-down', size=10, color='red'),
-                                     name='Sell Signal'),
+        elif (price_based_df['Close'].iloc[i-1] > price_based_df['EMA'].iloc[i-1] and 
+              price_based_df['Close'].iloc[i] <= price_based_df['EMA'].iloc[i]):
+            fig.add_trace(go.Scatter(x=[price_based_df.index[i]], y=[price_based_df['Low'].iloc[i]], mode='markers',
+                                     marker=dict(symbol='square', size=8, color='orange'),
+                                     name='Short Exit'),
                           row=1, col=1)
-        elif 'EXIT' in signal['signal']:
-            color = 'red' if 'LONG' in signal['signal'] else 'green'
-            symbol = 'circle' if signal['reason'] == 'Take Profit' else 'x'
-            fig.add_trace(go.Scatter(x=[data.index[signal['index']]], y=[signal['price']], 
-                                     mode='markers', marker=dict(symbol=symbol, size=8, color=color),
-                                     name=f'Exit {signal["reason"]}'),
-                          row=1, col=1)
-    
-    fig.update_layout(height=800, title_text=f"{ticker} Analysis")
+
+    fig.update_layout(height=800, title_text=f"{ticker} Price-Based Analysis")
     fig.update_xaxes(rangeslider_visible=False)
     return fig
 
@@ -284,7 +315,7 @@ def import_watchlist_from_csv(uploaded_file):
             ticker = row['Ticker']
             st.session_state.tickers[ticker] = {
                 "ema_period": int(row['EMA Period']),
-                "threshold": float(row['Threshold']),
+            "threshold": float(row['Threshold']),
                 "stop_loss_percent": float(row['Stop Loss %']),
                 "price_threshold": float(row['Price Threshold']),
                 "last_signal": None
@@ -320,7 +351,7 @@ def main():
                     "stop_loss_percent": stop_loss_percent,
                     "price_threshold": price_threshold,
                     "last_signal": None
-    }
+                }
         if new_ticker_list:
             st.success(f"Added {', '.join(new_ticker_list)} to the watchlist.")
         else:
