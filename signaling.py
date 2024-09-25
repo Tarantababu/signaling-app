@@ -19,32 +19,76 @@ class SignalGenerator:
         self.threshold = threshold
         self.stop_loss_percent = stop_loss_percent
         self.price_threshold = price_threshold
+        self.positions = []
+        self.signals = []
 
     def calculate_ema(self, data):
         ema = ta.ema(data['Close'], length=self.ema_period)
-        return ema.iloc[-1] if not ema.empty else None
+        return ema
 
     def calculate_deviation(self, price, ema):
-        return (price - ema) / ema if ema is not None else 0
+        return (price - ema) / ema if ema != 0 else 0
+
+    def enter_trade(self, direction, price, ema, index):
+        self.positions.append({
+            'direction': direction,
+            'entry_price': price,
+            'entry_ema': ema,
+            'entry_index': index
+        })
+        self.signals.append({
+            'index': index,
+            'signal': 'BUY' if direction == 'long' else 'SELL',
+            'price': price,
+            'ema': ema
+        })
+
+    def check_exit_condition(self, current_price, current_ema, index):
+        for position in self.positions[:]:
+            if position['direction'] == 'long':
+                if current_price <= position['entry_ema'] * (1 - self.stop_loss_percent / 100):
+                    self.exit_trade(position, current_price, current_ema, index, 'Stop Loss')
+                elif current_price >= position['entry_ema'] * (1 + self.threshold):
+                    self.exit_trade(position, current_price, current_ema, index, 'Take Profit')
+            else:  # short position
+                if current_price >= position['entry_ema'] * (1 + self.stop_loss_percent / 100):
+                    self.exit_trade(position, current_price, current_ema, index, 'Stop Loss')
+                elif current_price <= position['entry_ema'] * (1 - self.threshold):
+                    self.exit_trade(position, current_price, current_ema, index, 'Take Profit')
+
+    def exit_trade(self, position, current_price, current_ema, index, reason):
+        self.positions.remove(position)
+        self.signals.append({
+            'index': index,
+            'signal': f"EXIT {position['direction'].upper()}",
+            'price': current_price,
+            'ema': current_ema,
+            'reason': reason
+        })
 
     def generate_signal(self, data):
-        if data.empty:
-            return None, None, None, None
+        ema_series = self.calculate_ema(data)
+        signals = []
 
-        latest_ema = self.calculate_ema(data)
-        latest_close = data['Close'].iloc[-1]
-        deviation = self.calculate_deviation(latest_close, latest_ema)
+        for i in range(len(data)):
+            price = data['Close'].iloc[i]
+            ema = ema_series.iloc[i]
+            deviation = self.calculate_deviation(price, ema)
 
-        signal = None
-        if abs(deviation) > self.threshold:
-            price_change = abs(latest_close - data['Close'].iloc[-2]) / data['Close'].iloc[-2]
-            if price_change >= self.price_threshold:
+            if not self.positions and abs(deviation) > self.threshold:
                 if deviation < 0:
-                    signal = "BUY"
+                    self.enter_trade('long', price, ema, i)
                 else:
-                    signal = "SELL"
+                    self.enter_trade('short', price, ema, i)
+            elif self.positions:
+                self.check_exit_condition(price, ema, i)
 
-        return signal, latest_close, latest_ema, deviation
+        latest_signal = self.signals[-1] if self.signals else None
+        latest_price = data['Close'].iloc[-1]
+        latest_ema = ema_series.iloc[-1]
+        latest_deviation = self.calculate_deviation(latest_price, latest_ema)
+
+        return latest_signal, latest_price, latest_ema, latest_deviation
 
 def fetch_data(ticker, period="1d", interval="1m"):
     try:
@@ -61,7 +105,7 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
     signal, price, ema, deviation = generator.generate_signal(data)
     return {
         "ticker": ticker,
-        "signal": signal,
+        "signal": signal['signal'] if signal else None,
         "price": price,
         "ema": ema,
         "deviation": deviation,
