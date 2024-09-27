@@ -340,9 +340,9 @@ def main():
     st.sidebar.header("Add New Tickers")
     new_tickers = st.sidebar.text_input("Ticker Symbols (comma-separated)").upper()
     ema_period = st.sidebar.number_input("EMA Period", min_value=1, value=20)
-    threshold = st.sidebar.number_input("Deviation Threshold", min_value=0.01, value=0.02, format="%.2f")
+    threshold = st.sidebar.number_input("Deviation Threshold", min_value=0.000001, value=0.02, format="%.6f")
     stop_loss_percent = st.sidebar.number_input("Stop Loss %", min_value=0.1, value=2.0, format="%.1f")
-    price_threshold = st.sidebar.number_input("Price Threshold", min_value=0.001, value=0.005, format="%.3f")
+    price_threshold = st.sidebar.number_input("Price Threshold", min_value=0.000001, value=0.005, format="%.6f")
 
     if st.sidebar.button("Add Tickers"):
         new_ticker_list = [ticker.strip() for ticker in new_tickers.split(',') if ticker.strip()]
@@ -399,13 +399,13 @@ def main():
             watchlist_data.append({
                 "Ticker": ticker,
                 "EMA Period": ticker_data["ema_period"],
-                "Threshold": f"{ticker_data['threshold']:.2f}",
+                "Threshold": f"{ticker_data['threshold']:.6f}",
                 "Stop Loss %": f"{ticker_data['stop_loss_percent']:.1f}",
-                "Price Threshold": f"{ticker_data['price_threshold']:.3f}",
+                "Price Threshold": f"{ticker_data['price_threshold']:.6f}",
                 "Last Signal": signal_info.get("signal", "N/A"),
                 "Last Price": f"{signal_info.get('price', 0):.2f}" if signal_info.get('price') else "N/A",
                 "Current EMA": f"{signal_info.get('ema', 0):.2f}" if signal_info.get('ema') else "N/A",
-                "Current Deviation": f"{signal_info.get('deviation', 0):.4f}" if signal_info.get('deviation') is not None else "N/A",
+                "Current Deviation": f"{signal_info.get('deviation', 0):.6f}" if signal_info.get('deviation') is not None else "N/A",
                 "Timestamp": signal_info.get("timestamp", "N/A"),
             })
         
