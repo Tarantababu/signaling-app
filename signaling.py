@@ -176,8 +176,6 @@ def delete_profile(profile_name):
         del st.session_state.profiles[profile_name]
         with open('profiles.json', 'w') as f:
             json.dump(st.session_state.profiles, f)
-        if st.session_state.current_profile and st.session_state.current_profile.name == profile_name:
-            st.session_state.current_profile = None
         return True
     return False
 
@@ -541,13 +539,15 @@ def profile_management():
                     st.sidebar.error("Failed to rename profile. Name might already exist.")
 
         if st.sidebar.button("Delete Profile"):
-            if delete_profile(st.session_state.current_profile.name):
-                st.sidebar.success(f"Profile '{st.session_state.current_profile.name}' deleted")
-                st.session_state.current_profile = None
-                st.session_state.tickers = {}
+            profile_name = st.session_state.current_profile.name
+            st.session_state.current_profile = None
+            st.session_state.tickers = {}
+            if delete_profile(profile_name):
+                st.sidebar.success(f"Profile '{profile_name}' deleted")
                 st.experimental_rerun()
             else:
                 st.sidebar.error("Failed to delete profile")
+                st.session_state.current_profile = Profile.from_dict(st.session_state.profiles[profile_name])
 
         display_profile(st.session_state.current_profile)
 
