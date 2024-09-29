@@ -9,6 +9,7 @@ import csv
 import io
 import time
 import threading
+import json
 
 # Function to calculate EMA manually
 def calculate_ema(data, period):
@@ -92,6 +93,55 @@ class SignalGenerator:
         latest_deviation = self.calculate_deviation(latest_price, latest_ema)
 
         return latest_signal, latest_price, latest_ema, latest_deviation
+
+class Profile:
+    def __init__(self, name):
+        self.name = name
+        self.positions = []
+        self.trade_history = []
+
+    def add_position(self, ticker, entry_price, quantity, direction):
+        position = {
+            'ticker': ticker,
+            'entry_price': entry_price,
+            'quantity': quantity,
+            'direction': direction,
+            'entry_time': datetime.now().isoformat()
+        }
+        self.positions.append(position)
+
+    def close_position(self, index, exit_price, reason):
+        position = self.positions.pop(index)
+        position['exit_price'] = exit_price
+        position['exit_time'] = datetime.now().isoformat()
+        position['reason'] = reason
+        self.trade_history.append(position)
+
+    def to_dict(self):
+        return {
+            'name': self.name,
+            'positions': self.positions,
+            'trade_history': self.trade_history
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        profile = cls(data['name'])
+        profile.positions = data['positions']
+        profile.trade_history = data['trade_history']
+        return profile
+
+def save_profile(profile):
+    st.session_state.profiles[profile.name] = profile.to_dict()
+    with open('profiles.json', 'w') as f:
+        json.dump(st.session_state.profiles, f)
+
+def load_profiles():
+    try:
+        with open('profiles.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
 
 def show_temporary_message(message, message_type="info", duration=3):
     placeholder = st.empty()
@@ -327,6 +377,113 @@ def import_watchlist_from_csv(uploaded_file):
     except Exception as e:
         show_temporary_message(f"Error importing watchlist: {str(e)}", "error")
 
+def profile_management():
+    if 'profiles' not in st.session_state:
+        st.session_state.profiles = load_profiles()
+    
+    if 'current_profile' not in st.session_state:
+        st.session_state.current_profile = None
+
+    st.sidebar.header("Profile Management")
+    profile_names = list(st.session_state.profiles.keys())
+    profile_names.insert(0, "Create New Profile")
+    
+    selected_profile = st.sidebar.selectbox("Select Profile", profile_names)
+    
+    if selected_profile == "Create New Profile":
+        new_profile_name = st.sidebar.text_input("Enter new profile name")
+        if st.sidebar.button("Create Profile"):
+            if new_profile_name and new_profile_name not in st.session_state.profiles:
+                st.session_state.current_profile = Profile(new_profile_name)
+                save_profile(st.session_state.current_profile)
+                st.success(f"Profile '{new_profile_name}' created successfully!")
+            else:
+                st.error("Please enter a unique profile name.")
+    elif selected_profile:
+        st.session_state.current_profile = Profile.from_dict(st.session_state.profiles[selected_profile])
+        st.sidebar.success(f"Profile '{selected_profile}' loaded.")
+
+    if st.session_state.current_profile:
+        display_profile(st.session_state.current_profile)
+
+def display_profile(profile):
+    st.header(f"Profile: {profile.name}")
+    
+    # Display open positions
+    st.subheader("Open Positions")
+    if profile.positions:
+        positions_df = pd.DataFrame(profile.positions)
+        positions_df['entry_time'] = pd.to_datetime(positions_df['entry_time'])
+        positions_df = positions_df.sort_values('entry_time', ascending=False)
+        st.dataframe(positions_df)
+    else:
+        st.info("No open positions.")
+
+    # Display trade history
+    st.subheader("Trade History")
+    if profile.trade_history:
+        history_df = pd.DataFrame(profile.trade_history)
+        history_df['entry_time'] = pd.to_datetime(history_df['entry_time'])
+        history_df['exit_time'] = pd.to_datetime(history_df['exit_time'])
+        history_df = history_df.sort_values('exit_time', ascending=False)
+        st.dataframe(history_df)
+    else:
+        st.info("No trade history.")
+
+    # Add new position
+    st.subheader("Add New Position")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        ticker = st.text_input("Ticker")
+    with col2:
+        entry_price = st.number_input("Entry Price", min_value=0.01, step=0.01)
+    with col3:
+        quantity = st.number_input("Quantity", min_value=1, step=1)
+    with col4:
+        direction = st.selectbox("Direction", ["long", "short"])
+    
+    if st.button("Add Position"):
+        profile.add_position(ticker, entry_price, quantity, direction)
+        save_profile(profile)
+        st.success(f"Position added for {ticker}")
+        st.experimental_rerun()
+
+def check_exit_signals(profile, signal_generator):
+    for i, position in enumerate(profile.positions):
+        ticker = position['ticker']
+        direction = position['direction']
+        entry_price = position['entry_price']
+        
+        # Get the latest signal for this ticker
+        signal_data = signal_generator(
+            ticker, 
+            st.session_state.tickers[ticker]["ema_period"], 
+            st.session_state.tickers[ticker]["threshold"], 
+            st.session_state.tickers[ticker]["stop_loss_percent"],
+            st.session_state.tickers[ticker]["price_threshold"]
+        )
+        
+        current_price = signal_data['price']
+        current_ema = signal_data['ema']
+        
+        # Check for exit signals
+        if direction == 'long':
+            if current_price <= current_ema:
+                profile.close_position(i, current_price, "Exit Long")
+                st.warning(f"Exit Long signal for {ticker} at {current_price}")
+            elif current_price <= entry_price * (1 - st.session_state.tickers[ticker]["stop_loss_percent"] / 100):
+                profile.close_position(i, current_price, "Stop Loss")
+                st.warning(f"Stop Loss triggered for {ticker} at {current_price}")
+        elif direction == 'short':
+            if current_price >= current_ema:
+                profile.close_position(i, current_price, "Exit Short")
+                st.warning(f"Exit Short signal for {ticker} at {current_price}")
+            elif current_price >= entry_price * (1 + st.session_state.tickers[ticker]["stop_loss_percent"] / 100):
+                profile.close_position(i, current_price, "Stop Loss")
+                st.warning(f"Stop Loss triggered for {ticker} at {current_price}")
+    
+    save_profile(profile)
+
 def main():
     st.title("Signals")
 
@@ -335,6 +492,9 @@ def main():
         st.session_state.tickers = {}
     if 'selected_ticker' not in st.session_state:
         st.session_state.selected_ticker = None
+
+    # Add profile management
+    profile_management()
 
     # Sidebar for adding new tickers
     st.sidebar.header("Add New Tickers")
@@ -382,11 +542,13 @@ def main():
         refresh_signals()  # Refresh signals for the imported tickers
 
     # Main page
-    st.header("...")
+    st.header("Watchlist and Signals")
 
     # Single refresh button for all tickers
     if st.button("Refresh All Signals"):
         refresh_signals()
+        if st.session_state.current_profile:
+            check_exit_signals(st.session_state.current_profile, generate_signal)
         show_temporary_message("All signals refreshed!", "success")
 
     # Display Watchlist Summary
