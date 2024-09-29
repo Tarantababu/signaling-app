@@ -492,7 +492,6 @@ def check_exit_signals(profile, signal_generator):
     
     if positions_to_close:
         save_profile(profile)
-        st.experimental_rerun()
 
 def profile_management():
     if 'profiles' not in st.session_state:
@@ -586,7 +585,7 @@ def main():
                 save_profile(st.session_state.current_profile)
                 st.session_state.tickers = st.session_state.current_profile.watchlist
                 show_temporary_message(f"Added {', '.join(new_ticker_list)} to the watchlist.", "success")
-                refresh_signals()
+                st.experimental_rerun()
             else:
                 show_temporary_message("No valid tickers entered.", "warning")
 
@@ -603,15 +602,15 @@ def main():
         uploaded_file = st.sidebar.file_uploader("Import Watchlist (CSV)", type="csv")
         if uploaded_file is not None:
             import_watchlist_from_csv(uploaded_file)
-            refresh_signals()
+            st.experimental_rerun()
 
         st.header("Watchlist and Signals")
 
         if st.button("Refresh All Signals"):
             refresh_signals()
-            if st.session_state.current_profile:
-                check_exit_signals(st.session_state.current_profile, generate_signal)
+            check_exit_signals(st.session_state.current_profile, generate_signal)
             show_temporary_message("All signals refreshed!", "success")
+            st.experimental_rerun()
 
         display_active_signals()
 
@@ -685,7 +684,6 @@ def main():
                 save_profile(st.session_state.current_profile)
                 st.session_state.tickers = st.session_state.current_profile.watchlist
                 show_temporary_message("Watchlist updated successfully!", "success")
-                refresh_signals()
                 st.experimental_rerun()
 
         else:
