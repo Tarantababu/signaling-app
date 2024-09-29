@@ -115,7 +115,19 @@ class Profile:
         position['exit_price'] = exit_price
         position['exit_time'] = datetime.now().isoformat()
         position['reason'] = reason
+        pl = self.calculate_pl(position, exit_price)
+        position['pl'] = pl
         self.trade_history.append(position)
+        return pl
+
+    def delete_position(self, index):
+        return self.positions.pop(index)
+
+    def calculate_pl(self, position, current_price):
+        if position['direction'] == 'long':
+            return (current_price - position['entry_price']) * position['quantity']
+        else:  # short
+            return (position['entry_price'] - current_price) * position['quantity']
 
     def add_to_watchlist(self, ticker, ema_period, threshold, stop_loss_percent, price_threshold):
         self.watchlist[ticker] = {
@@ -458,15 +470,72 @@ def profile_management():
 
         display_profile(st.session_state.current_profile)
 
+def fetch_current_price(ticker):
+    try:
+        data = yf.Ticker(ticker).history(period="1d")
+        return data['Close'].iloc[-1]
+    except Exception as e:
+        st.error(f"Error fetching current price for {ticker}: {str(e)}")
+        return 0
+
 def display_profile(profile):
     st.header(f"Profile: {profile.name}")
     
     st.subheader("Open Positions")
     if profile.positions:
-        positions_df = pd.DataFrame(profile.positions)
-        positions_df['entry_time'] = pd.to_datetime(positions_df['entry_time'])
-        positions_df = positions_df.sort_values('entry_time', ascending=False)
-        st.dataframe(positions_df)
+        positions_data = []
+        for i, position in enumerate(profile.positions):
+            current_price = fetch_current_price(position['ticker'])
+            pl = profile.calculate_pl(position, current_price)
+            positions_data.append({
+                "Index": i,
+                "Ticker": position['ticker'],
+                "Direction": position['direction'],
+                "Quantity": position['quantity'],
+                "Entry Price": f"${position['entry_price']:.2f}",
+                "Current Price": f"${current_price:.2f}",
+                "P/L": f"${pl:.2f}",
+                "Entry Time": position['entry_time']
+            })
+        positions_df = pd.DataFrame(positions_data)
+        positions_df['Entry Time'] = pd.to_datetime(positions_df['Entry Time'])
+        positions_df = positions_df.sort_values('Entry Time', ascending=False)
+        
+        for i, row in positions_df.iterrows():
+            col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([1,2,2,2,2,2,2,1])
+            with col1:
+                st.write(row['Index'])
+            with col2:
+                st.write(row['Ticker'])
+            with col3:
+                st.write(row['Direction'])
+            with col4:
+                st.write(row['Quantity'])
+            with col5:
+                st.write(row['Entry Price'])
+            with col6:
+                st.write(row['Current Price'])
+            with col7:
+                st.write(row['P/L'])
+            with col8:
+                if st.button("Delete", key=f"delete_{row['Index']}"):
+                    deleted_position = profile.delete_position(row['Index'])
+                    save_profile(profile)
+                    st.success(f"Position for {deleted_position['ticker']} deleted.")
+                    st.experimental_rerun()
+
+        st.subheader("Close Position")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            position_index = st.selectbox("Select Position", options=positions_df['Index'].tolist())
+        with col2:
+            close_price = st.number_input("Close Price", min_value=0.01, step=0.01, value=fetch_current_price(profile.positions[position_index]['ticker']))
+        with col3:
+            if st.button("Close Position"):
+                pl = profile.close_position(position_index, close_price, "Manual Close")
+                save_profile(profile)
+                st.success(f"Position closed with P/L: ${pl:.2f}")
+                st.experimental_rerun()
     else:
         st.info("No open positions.")
 
@@ -498,6 +567,7 @@ def display_profile(profile):
         st.experimental_rerun()
 
 def check_exit_signals(profile, signal_generator):
+    positions_to_close = []
     for i, position in enumerate(profile.positions):
         ticker = position['ticker']
         direction = position['direction']
@@ -516,20 +586,22 @@ def check_exit_signals(profile, signal_generator):
         
         if direction == 'long':
             if current_price <= current_ema:
-                profile.close_position(i, current_price, "Exit Long")
-                st.warning(f"Exit Long signal for {ticker} at {current_price}")
+                positions_to_close.append((i, current_price, "Exit Long"))
             elif current_price <= entry_price * (1 - st.session_state.tickers[ticker]["stop_loss_percent"] / 100):
-                profile.close_position(i, current_price, "Stop Loss")
-                st.warning(f"Stop Loss triggered for {ticker} at {current_price}")
+                positions_to_close.append((i, current_price, "Stop Loss"))
         elif direction == 'short':
             if current_price >= current_ema:
-                profile.close_position(i, current_price, "Exit Short")
-                st.warning(f"Exit Short signal for {ticker} at {current_price}")
+                positions_to_close.append((i, current_price, "Exit Short"))
             elif current_price >= entry_price * (1 + st.session_state.tickers[ticker]["stop_loss_percent"] / 100):
-                profile.close_position(i, current_price, "Stop Loss")
-                st.warning(f"Stop Loss triggered for {ticker} at {current_price}")
+                positions_to_close.append((i, current_price, "Stop Loss"))
     
-    save_profile(profile)
+    for index, price, reason in reversed(positions_to_close):
+        pl = profile.close_position(index, price, reason)
+        st.warning(f"{reason} triggered for {profile.positions[index]['ticker']} at {price:.2f}. P/L: ${pl:.2f}")
+    
+    if positions_to_close:
+        save_profile(profile)
+        st.experimental_rerun()
 
 def main():
     st.title("Signals")
