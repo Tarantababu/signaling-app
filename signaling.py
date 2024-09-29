@@ -126,7 +126,7 @@ class Profile:
     def calculate_pl(self, position, current_price):
         if position['direction'] == 'long':
             return (current_price - position['entry_price']) * position['quantity']
-        else:  # short
+        else:
             return (position['entry_price'] - current_price) * position['quantity']
 
     def add_to_watchlist(self, ticker, ema_period, threshold, stop_loss_percent, price_threshold):
@@ -238,12 +238,6 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     
-    if result["signal"] in ["BUY", "SELL"]:
-        st.session_state.tickers[ticker]["active_signal"] = result
-    elif result["signal"] and "EXIT" in result["signal"]:
-        if st.session_state.tickers[ticker]["active_signal"]:
-            st.session_state.tickers[ticker]["active_signal"] = None
-    
     return result
 
 def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_threshold):
@@ -327,33 +321,13 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
     fig.update_xaxes(rangeslider_visible=False)
     return fig
 
-def display_active_signals():
-    st.sidebar.header("Active Signals")
-    active_signals = []
-    for ticker, ticker_data in st.session_state.tickers.items():
-        signal_info = ticker_data.get("active_signal")
-        if signal_info and signal_info["signal"] in ["BUY", "SELL"]:
-            sl_price = signal_info["price"] * (1 - ticker_data["stop_loss_percent"]/100) if signal_info["signal"] == "BUY" else signal_info["price"] * (1 + ticker_data["stop_loss_percent"]/100)
-            active_signals.append({
-                "Ticker": ticker,
-                "Signal": signal_info['signal'],
-                "Entry": f"{signal_info['price']:.2f}",
-                "Stop Loss": f"{sl_price:.2f}",
-                "Timestamp": signal_info['timestamp']
-            })
-
-    if active_signals:
-        df = pd.DataFrame(active_signals)
-        st.sidebar.dataframe(df, hide_index=True, use_container_width=True)
-    else:
-        st.sidebar.info("No active signals at the moment.")
-
 def refresh_signals():
     progress_bar = st.empty()
     status_text = st.empty()
     
     total_tickers = len(st.session_state.tickers)
     tickers_to_remove = []
+    active_signals = []
     for i, (ticker, ticker_data) in enumerate(st.session_state.tickers.items()):
         status_text.text(f"Refreshing signal for {ticker}...")
         try:
@@ -365,6 +339,16 @@ def refresh_signals():
                 ticker_data["price_threshold"]
             )
             st.session_state.tickers[ticker]["last_signal"] = signal_data
+            
+            if signal_data["signal"] in ["BUY", "SELL"]:
+                active_signals.append({
+                    "Ticker": ticker,
+                    "Signal": signal_data['signal'],
+                    "Price": f"${signal_data['price']:.2f}",
+                    "EMA": f"${signal_data['ema']:.2f}",
+                    "Deviation": f"{signal_data['deviation']:.4f}",
+                    "Timestamp": signal_data['timestamp']
+                })
         except Exception as e:
             error_message = f"Error updating signal for {ticker}: {str(e)}"
             show_temporary_message(error_message, "error")
@@ -382,93 +366,15 @@ def refresh_signals():
     status_text.empty()
     progress_bar.empty()
 
-    display_active_signals()
+    st.session_state.active_signals = active_signals
 
-def export_watchlist_to_csv():
-    data = []
-    for ticker, ticker_data in st.session_state.tickers.items():
-        data.append({
-            "Ticker": ticker,
-            "EMA Period": ticker_data["ema_period"],
-            "Threshold": ticker_data["threshold"],
-            "Stop Loss %": ticker_data["stop_loss_percent"],
-            "Price Threshold": ticker_data["price_threshold"]
-        })
-    df = pd.DataFrame(data)
-    return df.to_csv(index=False).encode('utf-8')
-
-def import_watchlist_from_csv(uploaded_file):
-    try:
-        df = pd.read_csv(uploaded_file)
-        for _, row in df.iterrows():
-            ticker = row['Ticker']
-            st.session_state.current_profile.add_to_watchlist(
-                ticker,
-                int(row['EMA Period']),
-                float(row['Threshold']),
-                float(row['Stop Loss %']),
-                float(row['Price Threshold'])
-            )
-        save_profile(st.session_state.current_profile)
-        st.session_state.tickers = st.session_state.current_profile.watchlist
-        show_temporary_message(f"Imported {len(df)} tickers to the watchlist.", "success")
-    except Exception as e:
-        show_temporary_message(f"Error importing watchlist: {str(e)}", "error")
-
-def profile_management():
-    if 'profiles' not in st.session_state:
-        st.session_state.profiles = load_profiles()
-    
-    if 'current_profile' not in st.session_state:
-        st.session_state.current_profile = None
-
-    st.sidebar.header("Profile Management")
-    profile_names = list(st.session_state.profiles.keys())
-    profile_names.insert(0, "Create New Profile")
-    
-    selected_profile = st.sidebar.selectbox("Select Profile", profile_names)
-    
-    if selected_profile == "Create New Profile":
-        new_profile_name = st.sidebar.text_input("Enter new profile name")
-        if st.sidebar.button("Create Profile"):
-            if new_profile_name and new_profile_name not in st.session_state.profiles:
-                st.session_state.current_profile = Profile(new_profile_name)
-                save_profile(st.session_state.current_profile)
-                st.success(f"Profile '{new_profile_name}' created successfully!")
-                st.experimental_rerun()
-            else:
-                st.error("Please enter a unique profile name.")
-    elif selected_profile:
-        try:
-            st.session_state.current_profile = Profile.from_dict(st.session_state.profiles[selected_profile])
-            st.sidebar.success(f"Profile '{selected_profile}' loaded.")
-            st.session_state.tickers = st.session_state.current_profile.watchlist
-        except Exception as e:
-            st.sidebar.error(f"Error loading profile: {str(e)}")
-            st.session_state.current_profile = None
-            st.session_state.tickers = {}
-
-    if st.session_state.current_profile:
-        st.sidebar.subheader("Edit Profile")
-        new_name = st.sidebar.text_input("New profile name", value=st.session_state.current_profile.name)
-        if st.sidebar.button("Rename Profile"):
-            if new_name != st.session_state.current_profile.name:
-                if rename_profile(st.session_state.current_profile.name, new_name):
-                    st.sidebar.success(f"Profile renamed to '{new_name}'")
-                    st.experimental_rerun()
-                else:
-                    st.sidebar.error("Failed to rename profile. Name might already exist.")
-
-        if st.sidebar.button("Delete Profile"):
-            if delete_profile(st.session_state.current_profile.name):
-                st.sidebar.success(f"Profile '{st.session_state.current_profile.name}' deleted")
-                st.session_state.current_profile = None
-                st.session_state.tickers = {}
-                st.experimental_rerun()
-            else:
-                st.sidebar.error("Failed to delete profile")
-
-        display_profile(st.session_state.current_profile)
+def display_active_signals():
+    st.subheader("Active Signals")
+    if hasattr(st.session_state, 'active_signals') and st.session_state.active_signals:
+        df = pd.DataFrame(st.session_state.active_signals)
+        st.dataframe(df, hide_index=True, use_container_width=True)
+    else:
+        st.info("No active signals at the moment.")
 
 def fetch_current_price(ticker):
     try:
@@ -501,41 +407,28 @@ def display_profile(profile):
         positions_df['Entry Time'] = pd.to_datetime(positions_df['Entry Time'])
         positions_df = positions_df.sort_values('Entry Time', ascending=False)
         
-        for i, row in positions_df.iterrows():
-            col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([1,2,2,2,2,2,2,1])
-            with col1:
-                st.write(row['Index'])
-            with col2:
-                st.write(row['Ticker'])
-            with col3:
-                st.write(row['Direction'])
-            with col4:
-                st.write(row['Quantity'])
-            with col5:
-                st.write(row['Entry Price'])
-            with col6:
-                st.write(row['Current Price'])
-            with col7:
-                st.write(row['P/L'])
-            with col8:
-                if st.button("Delete", key=f"delete_{row['Index']}"):
-                    deleted_position = profile.delete_position(row['Index'])
+        st.dataframe(positions_df, hide_index=True, use_container_width=True)
+        
+        st.subheader("Position Actions")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            action = st.selectbox("Select Action", ["Close Position", "Delete Position"])
+        with col2:
+            position_index = st.selectbox("Select Position", options=positions_df['Index'].tolist())
+        with col3:
+            if action == "Close Position":
+                close_price = st.number_input("Close Price", min_value=0.01, step=0.01, value=fetch_current_price(profile.positions[position_index]['ticker']))
+                if st.button("Execute"):
+                    pl = profile.close_position(position_index, close_price, "Manual Close")
+                    save_profile(profile)
+                    st.success(f"Position closed with P/L: ${pl:.2f}")
+                    st.experimental_rerun()
+            else:
+                if st.button("Execute"):
+                    deleted_position = profile.delete_position(position_index)
                     save_profile(profile)
                     st.success(f"Position for {deleted_position['ticker']} deleted.")
                     st.experimental_rerun()
-
-        st.subheader("Close Position")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            position_index = st.selectbox("Select Position", options=positions_df['Index'].tolist())
-        with col2:
-            close_price = st.number_input("Close Price", min_value=0.01, step=0.01, value=fetch_current_price(profile.positions[position_index]['ticker']))
-        with col3:
-            if st.button("Close Position"):
-                pl = profile.close_position(position_index, close_price, "Manual Close")
-                save_profile(profile)
-                st.success(f"Position closed with P/L: ${pl:.2f}")
-                st.experimental_rerun()
     else:
         st.info("No open positions.")
 
@@ -603,6 +496,61 @@ def check_exit_signals(profile, signal_generator):
         save_profile(profile)
         st.experimental_rerun()
 
+def profile_management():
+    if 'profiles' not in st.session_state:
+        st.session_state.profiles = load_profiles()
+    
+    if 'current_profile' not in st.session_state:
+        st.session_state.current_profile = None
+
+    st.sidebar.header("Profile Management")
+    profile_names = list(st.session_state.profiles.keys())
+    profile_names.insert(0, "Create New Profile")
+    
+    selected_profile = st.sidebar.selectbox("Select Profile", profile_names)
+    
+    if selected_profile == "Create New Profile":
+        new_profile_name = st.sidebar.text_input("Enter new profile name")
+        if st.sidebar.button("Create Profile"):
+            if new_profile_name and new_profile_name not in st.session_state.profiles:
+                st.session_state.current_profile = Profile(new_profile_name)
+                save_profile(st.session_state.current_profile)
+                st.success(f"Profile '{new_profile_name}' created successfully!")
+                st.experimental_rerun()
+            else:
+                st.error("Please enter a unique profile name.")
+    elif selected_profile:
+        try:
+            st.session_state.current_profile = Profile.from_dict(st.session_state.profiles[selected_profile])
+            st.sidebar.success(f"Profile '{selected_profile}' loaded.")
+            st.session_state.tickers = st.session_state.current_profile.watchlist
+        except Exception as e:
+            st.sidebar.error(f"Error loading profile: {str(e)}")
+            st.session_state.current_profile = None
+            st.session_state.tickers = {}
+
+    if st.session_state.current_profile:
+        st.sidebar.subheader("Edit Profile")
+        new_name = st.sidebar.text_input("New profile name", value=st.session_state.current_profile.name)
+        if st.sidebar.button("Rename Profile"):
+            if new_name != st.session_state.current_profile.name:
+                if rename_profile(st.session_state.current_profile.name, new_name):
+                    st.sidebar.success(f"Profile renamed to '{new_name}'")
+                    st.experimental_rerun()
+                else:
+                    st.sidebar.error("Failed to rename profile. Name might already exist.")
+
+        if st.sidebar.button("Delete Profile"):
+            if delete_profile(st.session_state.current_profile.name):
+                st.sidebar.success(f"Profile '{st.session_state.current_profile.name}' deleted")
+                st.session_state.current_profile = None
+                st.session_state.tickers = {}
+                st.experimental_rerun()
+            else:
+                st.sidebar.error("Failed to delete profile")
+
+        display_profile(st.session_state.current_profile)
+
 def main():
     st.title("Signals")
 
@@ -610,6 +558,8 @@ def main():
         st.session_state.tickers = {}
     if 'selected_ticker' not in st.session_state:
         st.session_state.selected_ticker = None
+    if 'active_signals' not in st.session_state:
+        st.session_state.active_signals = []
 
     profile_management()
 
@@ -640,8 +590,6 @@ def main():
             else:
                 show_temporary_message("No valid tickers entered.", "warning")
 
-        display_active_signals()
-
         if st.sidebar.button("Export Watchlist (CSV)"):
             csv_data = export_watchlist_to_csv()
             st.sidebar.download_button(
@@ -664,6 +612,8 @@ def main():
             if st.session_state.current_profile:
                 check_exit_signals(st.session_state.current_profile, generate_signal)
             show_temporary_message("All signals refreshed!", "success")
+
+        display_active_signals()
 
         st.header("Watchlist Summary")
 
@@ -742,6 +692,37 @@ def main():
             st.write("No tickers added yet. Use the sidebar to add tickers or import a watchlist.")
     else:
         st.write("Please select or create a profile to start.")
+
+def export_watchlist_to_csv():
+    data = []
+    for ticker, ticker_data in st.session_state.tickers.items():
+        data.append({
+            "Ticker": ticker,
+            "EMA Period": ticker_data["ema_period"],
+            "Threshold": ticker_data["threshold"],
+            "Stop Loss %": ticker_data["stop_loss_percent"],
+            "Price Threshold": ticker_data["price_threshold"]
+        })
+    df = pd.DataFrame(data)
+    return df.to_csv(index=False).encode('utf-8')
+
+def import_watchlist_from_csv(uploaded_file):
+    try:
+        df = pd.read_csv(uploaded_file)
+        for _, row in df.iterrows():
+            ticker = row['Ticker']
+            st.session_state.current_profile.add_to_watchlist(
+                ticker,
+                int(row['EMA Period']),
+                float(row['Threshold']),
+                float(row['Stop Loss %']),
+                float(row['Price Threshold'])
+            )
+        save_profile(st.session_state.current_profile)
+        st.session_state.tickers = st.session_state.current_profile.watchlist
+        show_temporary_message(f"Imported {len(df)} tickers to the watchlist.", "success")
+    except Exception as e:
+        show_temporary_message(f"Error importing watchlist: {str(e)}", "error")
 
 if __name__ == "__main__":
     main()
