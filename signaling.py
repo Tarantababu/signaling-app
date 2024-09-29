@@ -501,21 +501,30 @@ def check_exit_signals(profile, signal_generator):
         
         if direction == 'long':
             if current_price <= current_ema:
-                positions_to_close.append((i, current_price, "Exit Long"))
+                positions_to_close.append((i, current_price, "Exit Long", ticker))
             elif current_price <= entry_price * (1 - st.session_state.tickers[ticker]["stop_loss_percent"] / 100):
-                positions_to_close.append((i, current_price, "Stop Loss"))
+                positions_to_close.append((i, current_price, "Stop Loss", ticker))
         elif direction == 'short':
             if current_price >= current_ema:
-                positions_to_close.append((i, current_price, "Exit Short"))
+                positions_to_close.append((i, current_price, "Exit Short", ticker))
             elif current_price >= entry_price * (1 + st.session_state.tickers[ticker]["stop_loss_percent"] / 100):
-                positions_to_close.append((i, current_price, "Stop Loss"))
-    
-    for index, price, reason in reversed(positions_to_close):
-        pl = profile.close_position(index, price, reason)
-        st.warning(f"{reason} triggered for {profile.positions[index]['ticker']} at {price:.2f}. P/L: ${pl:.2f}")
-    
+                positions_to_close.append((i, current_price, "Stop Loss", ticker))
+
+    for index, price, reason, ticker in reversed(positions_to_close):
+        try:
+            pl = profile.close_position(index, price, reason)
+            st.warning(f"{reason} triggered for {ticker} at {price:.2f}. P/L: ${pl:.2f}")
+        except IndexError:
+            st.warning(f"Position for {ticker} has already been closed.")
+
     if positions_to_close:
         save_profile(profile)
+
+    for position in profile.positions:
+        ticker = position['ticker']
+        signal_data = st.session_state.tickers[ticker]["last_signal"]
+        if signal_data and signal_data["signal"] in ["EXIT LONG", "EXIT SHORT"]:
+            st.markdown(f'<p style="color:green;">Exit signal for open position: {ticker} - {signal_data["signal"]} at ${signal_data["price"]:.2f}</p>', unsafe_allow_html=True)
 
 def profile_management():
     if 'profiles' not in st.session_state:
