@@ -11,7 +11,6 @@ import time
 import threading
 import json
 
-# Function to calculate EMA manually
 def calculate_ema(data, period):
     return data.ewm(span=period, adjust=False).mean()
 
@@ -52,7 +51,7 @@ class SignalGenerator:
                     self.exit_trade(position, current_price, current_ema, index, 'Stop Loss')
                 elif current_price >= position['entry_ema']:
                     self.exit_trade(position, current_price, current_ema, index, 'Take Profit')
-            else:  # short position
+            else:
                 if current_price >= position['entry_ema'] * (1 + self.stop_loss_percent / 100):
                     self.exit_trade(position, current_price, current_ema, index, 'Stop Loss')
                 elif current_price <= position['entry_ema']:
@@ -143,9 +142,9 @@ class Profile:
     @classmethod
     def from_dict(cls, data):
         profile = cls(data['name'])
-        profile.positions = data['positions']
-        profile.trade_history = data['trade_history']
-        profile.watchlist = data['watchlist']
+        profile.positions = data.get('positions', [])
+        profile.trade_history = data.get('trade_history', [])
+        profile.watchlist = data.get('watchlist', {})
         return profile
 
 def save_profile(profile):
@@ -227,7 +226,6 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     
-    # Update active signal
     if result["signal"] in ["BUY", "SELL"]:
         st.session_state.tickers[ticker]["active_signal"] = result
     elif result["signal"] and "EXIT" in result["signal"]:
@@ -242,10 +240,8 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
         show_temporary_message(f"No data available to create chart for {ticker}", "warning")
         return None
     
-    # Calculate EMA
     ema = calculate_ema(data['Close'], ema_period)
     
-    # Create price-based candles
     price_based_data = []
     current_candle = data.iloc[0].copy()
     last_price = current_candle['Close']
@@ -268,32 +264,27 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
     price_based_data.append(current_candle)
     price_based_df = pd.DataFrame(price_based_data)
 
-    # Calculate deviation
     price_based_df['Deviation'] = (price_based_df['Close'] - price_based_df['EMA']) / price_based_df['EMA']
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
                         vertical_spacing=0.03, subplot_titles=(f'{ticker} Price-Based Candles and EMA', 'Deviation'),
                         row_heights=[0.7, 0.3])
     
-    # Price-based candles and EMA
     fig.add_trace(go.Candlestick(x=price_based_df.index, open=price_based_df['Open'], high=price_based_df['High'],
                                  low=price_based_df['Low'], close=price_based_df['Close'], name='Price'),
                   row=1, col=1)
     fig.add_trace(go.Scatter(x=price_based_df.index, y=price_based_df['EMA'], name=f'EMA-{ema_period}', line=dict(color='orange')),
                   row=1, col=1)
     
-    # Deviation
     fig.add_trace(go.Scatter(x=price_based_df.index, y=price_based_df['Deviation'], name='Deviation', line=dict(color='purple')),
                   row=2, col=1)
     fig.add_hline(y=threshold, line_dash="dash", line_color="green", row=2, col=1)
     fig.add_hline(y=-threshold, line_dash="dash", line_color="red", row=2, col=1)
     
-    # Add vertical lines for time separation
     time_intervals = pd.date_range(start=price_based_df.index.min(), end=price_based_df.index.max(), freq='D')
     for time in time_intervals:
         fig.add_vline(x=time, line_width=1, line_dash="dash", line_color="rgba(100,100,100,0.2)", row="all")
 
-    # Signals
     for i in range(1, len(price_based_df)):
         if abs(price_based_df['Deviation'].iloc[i]) > threshold:
             if price_based_df['Deviation'].iloc[i] < 0:
@@ -307,7 +298,6 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
                                          name='Sell Signal'),
                               row=1, col=1)
 
-        # Exit signals when price hits EMA
         if (price_based_df['Close'].iloc[i-1] < price_based_df['EMA'].iloc[i-1] and 
             price_based_df['Close'].iloc[i] >= price_based_df['EMA'].iloc[i]):
             fig.add_trace(go.Scatter(x=[price_based_df.index[i]], y=[price_based_df['High'].iloc[i]], mode='markers',
@@ -380,7 +370,6 @@ def refresh_signals():
     status_text.empty()
     progress_bar.empty()
 
-    # Refresh the display of active signals
     display_active_signals()
 
 def export_watchlist_to_csv():
@@ -438,37 +427,40 @@ def profile_management():
             else:
                 st.error("Please enter a unique profile name.")
     elif selected_profile:
-        st.session_state.current_profile = Profile.from_dict(st.session_state.profiles[selected_profile])
-        st.sidebar.success(f"Profile '{selected_profile}' loaded.")
-        st.session_state.tickers = st.session_state.current_profile.watchlist
+        try:
+            st.session_state.current_profile = Profile.from_dict(st.session_state.profiles[selected_profile])
+            st.sidebar.success(f"Profile '{selected_profile}' loaded.")
+            st.session_state.tickers = st.session_state.current_profile.watchlist
+        except Exception as e:
+            st.sidebar.error(f"Error loading profile: {str(e)}")
+            st.session_state.current_profile = None
+            st.session_state.tickers = {}
 
-        # Profile editing options
+    if st.session_state.current_profile:
         st.sidebar.subheader("Edit Profile")
-        new_name = st.sidebar.text_input("New profile name", value=selected_profile)
+        new_name = st.sidebar.text_input("New profile name", value=st.session_state.current_profile.name)
         if st.sidebar.button("Rename Profile"):
-            if new_name != selected_profile:
-                if rename_profile(selected_profile, new_name):
+            if new_name != st.session_state.current_profile.name:
+                if rename_profile(st.session_state.current_profile.name, new_name):
                     st.sidebar.success(f"Profile renamed to '{new_name}'")
                     st.experimental_rerun()
                 else:
                     st.sidebar.error("Failed to rename profile. Name might already exist.")
 
         if st.sidebar.button("Delete Profile"):
-            if delete_profile(selected_profile):
-                st.sidebar.success(f"Profile '{selected_profile}' deleted")
+            if delete_profile(st.session_state.current_profile.name):
+                st.sidebar.success(f"Profile '{st.session_state.current_profile.name}' deleted")
                 st.session_state.current_profile = None
                 st.session_state.tickers = {}
                 st.experimental_rerun()
             else:
                 st.sidebar.error("Failed to delete profile")
 
-    if st.session_state.current_profile:
         display_profile(st.session_state.current_profile)
 
 def display_profile(profile):
     st.header(f"Profile: {profile.name}")
     
-    # Display open positions
     st.subheader("Open Positions")
     if profile.positions:
         positions_df = pd.DataFrame(profile.positions)
@@ -478,7 +470,6 @@ def display_profile(profile):
     else:
         st.info("No open positions.")
 
-    # Display trade history
     st.subheader("Trade History")
     if profile.trade_history:
         history_df = pd.DataFrame(profile.trade_history)
@@ -489,7 +480,6 @@ def display_profile(profile):
     else:
         st.info("No trade history.")
 
-    # Add new position
     st.subheader("Add New Position")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -513,7 +503,6 @@ def check_exit_signals(profile, signal_generator):
         direction = position['direction']
         entry_price = position['entry_price']
         
-        # Get the latest signal for this ticker
         signal_data = signal_generator(
             ticker, 
             st.session_state.tickers[ticker]["ema_period"], 
@@ -525,7 +514,6 @@ def check_exit_signals(profile, signal_generator):
         current_price = signal_data['price']
         current_ema = signal_data['ema']
         
-        # Check for exit signals
         if direction == 'long':
             if current_price <= current_ema:
                 profile.close_position(i, current_price, "Exit Long")
@@ -546,18 +534,14 @@ def check_exit_signals(profile, signal_generator):
 def main():
     st.title("Signals")
 
-    # Initialize session state
     if 'tickers' not in st.session_state:
         st.session_state.tickers = {}
     if 'selected_ticker' not in st.session_state:
         st.session_state.selected_ticker = None
 
-    # Add profile management
     profile_management()
 
-    # Only show the rest of the UI if a profile is selected
     if st.session_state.current_profile:
-        # Sidebar for adding new tickers
         st.sidebar.header("Add New Tickers")
         new_tickers = st.sidebar.text_input("Ticker Symbols (comma-separated)").upper()
         ema_period = st.sidebar.number_input("EMA Period", min_value=1, value=20)
@@ -580,14 +564,12 @@ def main():
                 save_profile(st.session_state.current_profile)
                 st.session_state.tickers = st.session_state.current_profile.watchlist
                 show_temporary_message(f"Added {', '.join(new_ticker_list)} to the watchlist.", "success")
-                refresh_signals()  # Refresh signals for the new tickers
+                refresh_signals()
             else:
                 show_temporary_message("No valid tickers entered.", "warning")
 
-        # Display Active Signals
         display_active_signals()
 
-        # Export and Import section in the sidebar
         if st.sidebar.button("Export Watchlist (CSV)"):
             csv_data = export_watchlist_to_csv()
             st.sidebar.download_button(
@@ -601,19 +583,16 @@ def main():
         uploaded_file = st.sidebar.file_uploader("Import Watchlist (CSV)", type="csv")
         if uploaded_file is not None:
             import_watchlist_from_csv(uploaded_file)
-            refresh_signals()  # Refresh signals for the imported tickers
+            refresh_signals()
 
-        # Main page
         st.header("Watchlist and Signals")
 
-        # Single refresh button for all tickers
         if st.button("Refresh All Signals"):
             refresh_signals()
             if st.session_state.current_profile:
                 check_exit_signals(st.session_state.current_profile, generate_signal)
             show_temporary_message("All signals refreshed!", "success")
 
-        # Display Watchlist Summary
         st.header("Watchlist Summary")
 
         if st.session_state.current_profile.watchlist:
@@ -642,10 +621,8 @@ def main():
                 key="watchlist_table"
             )
             
-            # Create a selectbox for choosing a ticker to display
             selected_ticker = st.selectbox("Select a ticker to display chart", options=list(st.session_state.current_profile.watchlist.keys()))
             
-            # Display chart for selected ticker
             if selected_ticker:
                 st.subheader(f"Chart for {selected_ticker}")
                 ticker_data = st.session_state.current_profile.watchlist[selected_ticker]
@@ -659,7 +636,6 @@ def main():
                 if chart:
                     st.plotly_chart(chart, use_container_width=True)
             
-            # Process edits and deletions
             if not df.equals(edited_df):
                 for index, row in edited_df.iterrows():
                     ticker = row['Ticker']
@@ -680,7 +656,6 @@ def main():
                         show_temporary_message(f"Error processing row for {ticker}: {str(e)}. This ticker will be ignored.", "error")
                         st.session_state.current_profile.remove_from_watchlist(ticker)
                 
-                # Remove deleted tickers
                 tickers_to_remove = set(st.session_state.current_profile.watchlist.keys()) - set(edited_df['Ticker'])
                 for ticker in tickers_to_remove:
                     st.session_state.current_profile.remove_from_watchlist(ticker)
@@ -688,7 +663,7 @@ def main():
                 save_profile(st.session_state.current_profile)
                 st.session_state.tickers = st.session_state.current_profile.watchlist
                 show_temporary_message("Watchlist updated successfully!", "success")
-                refresh_signals()  # Refresh signals after updating the watchlist
+                refresh_signals()
                 st.experimental_rerun()
 
         else:
