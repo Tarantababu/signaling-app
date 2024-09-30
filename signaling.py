@@ -161,21 +161,30 @@ class Profile:
 
 def save_profile(profile):
     st.session_state.profiles[profile.name] = profile.to_dict()
-    with open('profiles.json', 'w') as f:
-        json.dump(st.session_state.profiles, f)
+    try:
+        with open('profiles.json', 'w') as f:
+            json.dump(st.session_state.profiles, f, indent=4)
+    except Exception as e:
+        st.error(f"Error saving profiles: {str(e)}")
 
 def load_profiles():
     try:
         with open('profiles.json', 'r') as f:
-            return json.load(f)
+            content = f.read()
+            if not content:
+                return {}
+            return json.loads(content)
     except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError:
+        st.error("Error: profiles.json contains invalid data. Starting with an empty profile list.")
         return {}
 
 def delete_profile(profile_name):
     if profile_name in st.session_state.profiles:
         del st.session_state.profiles[profile_name]
         with open('profiles.json', 'w') as f:
-            json.dump(st.session_state.profiles, f)
+            json.dump(st.session_state.profiles, f, indent=4)
         return True
     return False
 
@@ -184,7 +193,7 @@ def rename_profile(old_name, new_name):
         st.session_state.profiles[new_name] = st.session_state.profiles.pop(old_name)
         st.session_state.profiles[new_name]['name'] = new_name
         with open('profiles.json', 'w') as f:
-            json.dump(st.session_state.profiles, f)
+            json.dump(st.session_state.profiles, f, indent=4)
         if st.session_state.current_profile and st.session_state.current_profile.name == old_name:
             st.session_state.current_profile.name = new_name
         return True
