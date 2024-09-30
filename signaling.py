@@ -233,9 +233,18 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
             "price": None,
             "ema": None,
             "deviation": None,
+            "sl_price": None,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
     signal, price, ema, deviation = generator.generate_signal(data)
+    
+    # Calculate SL price
+    sl_price = None
+    if signal and signal['signal'] in ['BUY', 'SELL']:
+        if signal['signal'] == 'BUY':
+            sl_price = price * (1 - stop_loss_percent / 100)
+        else:  # SELL signal
+            sl_price = price * (1 + stop_loss_percent / 100)
     
     result = {
         "ticker": ticker,
@@ -243,6 +252,7 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
         "price": price,
         "ema": ema,
         "deviation": deviation,
+        "sl_price": sl_price,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     
@@ -355,6 +365,7 @@ def refresh_signals():
                     "Ticker": ticker,
                     "Signal": signal_data['signal'],
                     "Price": f"${signal_data['price']:.2f}",
+                    "SL Price": f"${signal_data['sl_price']:.2f}" if signal_data['sl_price'] else "N/A",
                     "EMA": f"${signal_data['ema']:.2f}",
                     "Deviation": f"{signal_data['deviation']:.4f}",
                     "Timestamp": signal_data['timestamp']
