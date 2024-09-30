@@ -402,10 +402,10 @@ def display_active_signals():
         st.info("No active signals at the moment.")
     
     if hasattr(st.session_state, 'exit_signals_for_open_positions') and st.session_state.exit_signals_for_open_positions:
-        st.subheader("Exit Signals for Open Positions", help="These are exit signals for currently open positions.")
+        st.subheader("Exit Signals for Open Positions", help="These are exit signals for currently open positions. Action required.")
         df_exit = pd.DataFrame(st.session_state.exit_signals_for_open_positions)
         st.dataframe(df_exit, hide_index=True, use_container_width=True)
-        st.markdown('<p style="color:green;">These exit signals are for your open positions.</p>', unsafe_allow_html=True)
+        st.markdown('<p style="color:red;">Warning: These are exit signals for your open positions. Please review and take appropriate action.</p>', unsafe_allow_html=True)
 
 def fetch_current_price(ticker):
     try:
@@ -491,8 +491,8 @@ def display_profile(profile):
         st.experimental_rerun()
 
 def check_exit_signals(profile, signal_generator):
-    positions_to_close = []
-    for i, position in enumerate(profile.positions):
+    exit_signals = []
+    for position in profile.positions:
         ticker = position['ticker']
         direction = position['direction']
         entry_price = position['entry_price']
@@ -510,30 +510,16 @@ def check_exit_signals(profile, signal_generator):
         
         if direction == 'long':
             if current_price <= current_ema:
-                positions_to_close.append((i, current_price, "Exit Long", ticker))
+                exit_signals.append((ticker, current_price, "Exit Long"))
             elif current_price <= entry_price * (1 - st.session_state.tickers[ticker]["stop_loss_percent"] / 100):
-                positions_to_close.append((i, current_price, "Stop Loss", ticker))
+                exit_signals.append((ticker, current_price, "Stop Loss (Long)"))
         elif direction == 'short':
             if current_price >= current_ema:
-                positions_to_close.append((i, current_price, "Exit Short", ticker))
+                exit_signals.append((ticker, current_price, "Exit Short"))
             elif current_price >= entry_price * (1 + st.session_state.tickers[ticker]["stop_loss_percent"] / 100):
-                positions_to_close.append((i, current_price, "Stop Loss", ticker))
+                exit_signals.append((ticker, current_price, "Stop Loss (Short)"))
 
-    for index, price, reason, ticker in reversed(positions_to_close):
-        try:
-            pl = profile.close_position(index, price, reason)
-            st.warning(f"{reason} triggered for {ticker} at {price:.2f}. P/L: ${pl:.2f}")
-        except IndexError:
-            st.warning(f"Position for {ticker} has already been closed.")
-
-    if positions_to_close:
-        save_profile(profile)
-
-    for position in profile.positions:
-        ticker = position['ticker']
-        signal_data = st.session_state.tickers[ticker]["last_signal"]
-        if signal_data and signal_data["signal"] in ["EXIT LONG", "EXIT SHORT"]:
-            st.markdown(f'<p style="color:green;">Exit signal for open position: {ticker} - {signal_data["signal"]} at ${signal_data["price"]:.2f}</p>', unsafe_allow_html=True)
+    return exit_signals
 
 def profile_management():
     if 'profiles' not in st.session_state:
@@ -652,7 +638,15 @@ def main():
 
         if st.button("Refresh All Signals"):
             refresh_signals()
-            check_exit_signals(st.session_state.current_profile, generate_signal)
+            exit_signals = check_exit_signals(st.session_state.current_profile, generate_signal)
+            st.session_state.exit_signals_for_open_positions = [
+                {
+                    "Ticker": ticker,
+                    "Signal": signal,
+                    "Price": f"${price:.2f}",
+                    "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                } for ticker, price, signal in exit_signals
+            ]
             show_temporary_message("All signals refreshed!", "success")
             st.experimental_rerun()
 
