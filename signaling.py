@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import csv
 import io
-import time
+import time as tm
 import threading
 import json
 import pytz
@@ -421,9 +421,12 @@ def get_market_close_time():
     now = datetime.now(ny_tz)
     market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
     
-    if now.time() > time(16, 0) or now.weekday() > 4:  # After 4 PM or weekend
+    if now.time() > time(16, 0) or now.weekday() >= 5:
         days_ahead = 1 if now.weekday() < 4 else (7 - now.weekday())
         market_close += timedelta(days=days_ahead)
+    
+    if now.time() < time(9, 30):
+        market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
     
     return market_close
 
