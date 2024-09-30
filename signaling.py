@@ -441,6 +441,10 @@ def display_market_close_timer():
     st.sidebar.markdown("### Time to Market Close")
     st.sidebar.markdown(f"{time_remaining.days} days, {hours:02d}:{minutes:02d}:{seconds:02d}")
 
+    # Check if remaining time is less than 30 minutes
+    if time_remaining.days == 0 and hours == 0 and minutes < 30:
+        st.sidebar.warning("⚠️ Less than 30 minutes until market close!")
+
 def display_profile(profile):
     st.header(f"Profile: {profile.name}")
     
