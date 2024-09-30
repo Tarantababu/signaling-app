@@ -2,7 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import csv
@@ -10,6 +10,7 @@ import io
 import time
 import threading
 import json
+import pytz
 
 def calculate_ema(data, period):
     return data.ewm(span=period, adjust=False).mean()
@@ -415,15 +416,39 @@ def fetch_current_price(ticker):
         st.error(f"Error fetching current price for {ticker}: {str(e)}")
         return 0
 
+def get_market_close_time():
+    ny_tz = pytz.timezone('America/New_York')
+    now = datetime.now(ny_tz)
+    market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+    
+    if now.time() > time(16, 0) or now.weekday() > 4:  # After 4 PM or weekend
+        days_ahead = 1 if now.weekday() < 4 else (7 - now.weekday())
+        market_close += timedelta(days=days_ahead)
+    
+    return market_close
+
+def display_market_close_timer():
+    market_close = get_market_close_time()
+    now = datetime.now(pytz.timezone('America/New_York'))
+    time_remaining = market_close - now
+    
+    hours, remainder = divmod(time_remaining.seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    
+    st.sidebar.markdown("### Time to Market Close")
+    st.sidebar.markdown(f"{time_remaining.days} days, {hours:02d}:{minutes:02d}:{seconds:02d}")
+
 def display_profile(profile):
     st.header(f"Profile: {profile.name}")
     
     st.subheader("Open Positions")
     if profile.positions:
         positions_data = []
+        total_pl = 0
         for i, position in enumerate(profile.positions):
             current_price = fetch_current_price(position['ticker'])
             pl = profile.calculate_pl(position, current_price)
+            total_pl += pl
             positions_data.append({
                 "Index": i,
                 "Ticker": position['ticker'],
@@ -439,6 +464,8 @@ def display_profile(profile):
         positions_df = positions_df.sort_values('Entry Time', ascending=False)
         
         st.dataframe(positions_df, hide_index=True, use_container_width=True)
+        
+        st.markdown(f"**Total P/L for Open Positions: ${total_pl:.2f}**")
         
         st.subheader("Position Actions")
         col1, col2, col3 = st.columns(3)
@@ -590,6 +617,7 @@ def main():
     if 'exit_signals_for_open_positions' not in st.session_state:
         st.session_state.exit_signals_for_open_positions = []
 
+    display_market_close_timer()
     profile_management()
 
     if st.session_state.current_profile:
