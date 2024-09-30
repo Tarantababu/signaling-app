@@ -11,6 +11,10 @@ import time as tm
 import threading
 import json
 import pytz
+import requests
+
+TELEGRAM_TOKEN = "7148511647:AAFlMohYiqPF2GQFtri2qW4H0WU2-j174TQ"
+TELEGRAM_CHAT_ID = "5611879467"
 
 def calculate_ema(data, period):
     return data.ewm(span=period, adjust=False).mean()
@@ -441,6 +445,38 @@ def get_market_close_time():
     
     return market_close
 
+def send_message(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={TELEGRAM_CHAT_ID}&text={message}"
+    try:
+        res = requests.get(url)
+        res.raise_for_status()  # Raise an HTTPError for bad responses
+        if res.status_code == 200:
+            return "sent"
+        else:
+            print(f"Telegram API responded with status code {res.status_code}")
+            return "failed"
+    except requests.RequestException as e:
+        print(f"Request failed: {e}")
+        return "failed"
+
+def send_signals_to_telegram():
+    active_signals_message = "Active Signals:\n"
+    if hasattr(st.session_state, 'active_signals') and st.session_state.active_signals:
+        for signal in st.session_state.active_signals:
+            active_signals_message += f"{signal['Ticker']}: {signal['Signal']} at {signal['Price']} (SL: {signal['SL Price']})\n"
+    else:
+        active_signals_message += "No active signals at the moment.\n"
+
+    exit_signals_message = "Exit Signals for Open Positions:\n"
+    if hasattr(st.session_state, 'exit_signals_for_open_positions') and st.session_state.exit_signals_for_open_positions:
+        for signal in st.session_state.exit_signals_for_open_positions:
+            exit_signals_message += f"{signal['Ticker']}: {signal['Signal']} at {signal['Price']}\n"
+    else:
+        exit_signals_message += "No exit signals for open positions at the moment.\n"
+
+    full_message = active_signals_message + "\n" + exit_signals_message
+    return send_message(full_message)
+
 def display_market_close_timer():
     market_close = get_market_close_time()
     now = datetime.now(pytz.timezone('America/New_York'))
@@ -455,6 +491,17 @@ def display_market_close_timer():
     # Check if remaining time is less than 30 minutes
     if time_remaining.days == 0 and hours == 0 and minutes < 30:
         st.sidebar.warning("⚠️ Less than 30 minutes until market close!")
+        
+        # Send signals to Telegram if not already sent
+        if 'telegram_sent' not in st.session_state or not st.session_state.telegram_sent:
+            if send_signals_to_telegram() == "sent":
+                st.session_state.telegram_sent = True
+                st.sidebar.success("Signals sent to Telegram!")
+            else:
+                st.sidebar.error("Failed to send signals to Telegram. Please check your connection and try again.")
+    else:
+        # Reset the telegram_sent flag if it's not within 30 minutes of market close
+        st.session_state.telegram_sent = False
 
 def display_profile(profile):
     st.header(f"Profile: {profile.name}")
@@ -634,6 +681,8 @@ def main():
         st.session_state.active_signals = []
     if 'exit_signals_for_open_positions' not in st.session_state:
         st.session_state.exit_signals_for_open_positions = []
+    if 'telegram_sent' not in st.session_state:
+        st.session_state.telegram_sent = False
 
     display_market_close_timer()
     profile_management()
