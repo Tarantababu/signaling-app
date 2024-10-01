@@ -12,7 +12,7 @@ import json
 import pytz
 import requests
 
-ALPHA_VANTAGE_API_KEY = "YOUR_ALPHA_VANTAGE_API_KEY"  # Replace with your actual API key
+ALPHA_VANTAGE_API_KEY = "1260MG2P7VRFWMVA"  # Replace with your actual API key
 TELEGRAM_TOKEN = "7148511647:AAFlMohYiqPF2GQFtri2qW4H0WU2-j174TQ"
 TELEGRAM_CHAT_ID = "5611879467"
 
