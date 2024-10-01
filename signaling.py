@@ -1,5 +1,4 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, time
@@ -13,11 +12,27 @@ import json
 import pytz
 import requests
 
+ALPHA_VANTAGE_API_KEY = "YOUR_ALPHA_VANTAGE_API_KEY"  # Replace with your actual API key
 TELEGRAM_TOKEN = "7148511647:AAFlMohYiqPF2GQFtri2qW4H0WU2-j174TQ"
 TELEGRAM_CHAT_ID = "5611879467"
 
 def calculate_ema(data, period):
     return data.ewm(span=period, adjust=False).mean()
+
+def fetch_alpha_vantage_data(ticker, interval="1min"):
+    url = f'https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={ticker}&interval={interval}&outputsize=full&apikey={ALPHA_VANTAGE_API_KEY}'
+    r = requests.get(url)
+    data = r.json()
+    
+    if f"Time Series ({interval})" not in data:
+        st.error(f"Error fetching data for {ticker}: {data.get('Note', 'Unknown error')}")
+        return pd.DataFrame()
+    
+    df = pd.DataFrame(data[f"Time Series ({interval})"]).T
+    df.index = pd.to_datetime(df.index)
+    df = df.astype(float)
+    df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+    return df.sort_index()
 
 class SignalGenerator:
     def __init__(self, ticker, ema_period, threshold, stop_loss_percent, price_threshold):
@@ -217,19 +232,9 @@ def show_temporary_message(message, message_type="info", duration=3):
     
     threading.Timer(duration, placeholder.empty).start()
 
-def fetch_data(ticker, period="1d", interval="1m"):
-    try:
-        data = yf.download(ticker, period=period, interval=interval)
-        if data.empty:
-            show_temporary_message(f"No data available for {ticker}", "warning")
-        return data
-    except Exception as e:
-        show_temporary_message(f"Error fetching data for {ticker}: {str(e)}", "error")
-        return pd.DataFrame()
-
 def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_threshold):
     generator = SignalGenerator(ticker, ema_period, threshold, stop_loss_percent, price_threshold)
-    data = fetch_data(ticker)
+    data = fetch_alpha_vantage_data(ticker)
     if data.empty:
         return {
             "ticker": ticker,
@@ -263,7 +268,7 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
     return result
 
 def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_threshold):
-    data = fetch_data(ticker, period="5d", interval="5m")
+    data = fetch_alpha_vantage_data(ticker)
     if data.empty:
         show_temporary_message(f"No data available to create chart for {ticker}", "warning")
         return None
@@ -343,89 +348,9 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
     fig.update_xaxes(rangeslider_visible=False)
     return fig
 
-def refresh_signals():
-    progress_bar = st.empty()
-    status_text = st.empty()
-    
-    total_tickers = len(st.session_state.tickers)
-    tickers_to_remove = []
-    active_signals = []
-    exit_signals_for_open_positions = []
-    
-    for i, (ticker, ticker_data) in enumerate(st.session_state.tickers.items()):
-        status_text.text(f"Refreshing signal for {ticker}...")
-        try:
-            signal_data = generate_signal(
-                ticker, 
-                ticker_data["ema_period"], 
-                ticker_data["threshold"], 
-                ticker_data["stop_loss_percent"],
-                ticker_data["price_threshold"]
-            )
-            st.session_state.tickers[ticker]["last_signal"] = signal_data
-            
-            if signal_data["signal"] in ["BUY", "SELL"]:
-                active_signals.append({
-                    "Ticker": ticker,
-                    "Signal": signal_data['signal'],
-                    "Price": f"${signal_data['price']:.2f}",
-                    "SL Price": f"${signal_data['sl_price']:.2f}" if signal_data['sl_price'] else "N/A",
-                    "EMA": f"${signal_data['ema']:.2f}",
-                    "Deviation": f"{signal_data['deviation']:.4f}",
-                    "Timestamp": signal_data['timestamp']
-                })
-            
-            if signal_data["signal"] in ["EXIT LONG", "EXIT SHORT"]:
-                for position in st.session_state.current_profile.positions:
-                    if position['ticker'] == ticker:
-                        exit_type = "Long" if position['direction'] == 'long' else "Short"
-                        exit_signals_for_open_positions.append({
-                            "Ticker": ticker,
-                            "Signal": f"EXIT {exit_type}",
-                            "Price": f"${signal_data['price']:.2f}",
-                            "EMA": f"${signal_data['ema']:.2f}",
-                            "Deviation": f"{signal_data['deviation']:.4f}",
-                            "Timestamp": signal_data['timestamp']
-                        })
-                        break
-            
-        except Exception as e:
-            error_message = f"Error updating signal for {ticker}: {str(e)}"
-            show_temporary_message(error_message, "error")
-            tickers_to_remove.append(ticker)
-        
-        progress = (i + 1) / total_tickers
-        progress_bar.progress(progress)
-    
-    for ticker in tickers_to_remove:
-        del st.session_state.tickers[ticker]
-    
-    if tickers_to_remove:
-        show_temporary_message(f"Removed {len(tickers_to_remove)} ticker(s) due to data fetching errors.", "warning")
-    
-    status_text.empty()
-    progress_bar.empty()
-
-    st.session_state.active_signals = active_signals
-    st.session_state.exit_signals_for_open_positions = exit_signals_for_open_positions
-
-def display_active_signals():
-    st.subheader("Active Signals")
-    if hasattr(st.session_state, 'active_signals') and st.session_state.active_signals:
-        df = pd.DataFrame(st.session_state.active_signals)
-        st.dataframe(df, hide_index=True, use_container_width=True)
-    else:
-        st.info("No active signals at the moment.")
-    
-    if hasattr(st.session_state, 'exit_signals_for_open_positions') and st.session_state.exit_signals_for_open_positions:
-        st.subheader("Exit Signals for Open Positions", help="These are exit signals for currently open positions. Action required.")
-        df_exit = pd.DataFrame(st.session_state.exit_signals_for_open_positions)
-        st.dataframe(df_exit, hide_index=True, use_container_width=True)
-        st.markdown('<p style="color:red;">Warning: These are exit signals for your open positions. Please review and take appropriate action.</p>', unsafe_allow_html=True)
-
 def fetch_current_price(ticker):
     try:
-        data = yf.Ticker(ticker).history(period="1d")
+        data = fetch_alpha_vantage_data(ticker)
         return data['Close'].iloc[-1]
     except Exception as e:
         st.error(f"Error fetching current price for {ticker}: {str(e)}")
@@ -670,6 +595,117 @@ def profile_management():
 
         display_profile(st.session_state.current_profile)
 
+def refresh_signals():
+    progress_bar = st.empty()
+    status_text = st.empty()
+    
+    total_tickers = len(st.session_state.tickers)
+    tickers_to_remove = []
+    active_signals = []
+    exit_signals_for_open_positions = []
+    
+    for i, (ticker, ticker_data) in enumerate(st.session_state.tickers.items()):
+        status_text.text(f"Refreshing signal for {ticker}...")
+        try:
+            signal_data = generate_signal(
+                ticker, 
+                ticker_data["ema_period"], 
+                ticker_data["threshold"], 
+                ticker_data["stop_loss_percent"],
+                ticker_data["price_threshold"]
+            )
+            st.session_state.tickers[ticker]["last_signal"] = signal_data
+            
+            if signal_data["signal"] in ["BUY", "SELL"]:
+                active_signals.append({
+                    "Ticker": ticker,
+                    "Signal": signal_data['signal'],
+                    "Price": f"${signal_data['price']:.2f}",
+                    "SL Price": f"${signal_data['sl_price']:.2f}" if signal_data['sl_price'] else "N/A",
+                    "EMA": f"${signal_data['ema']:.2f}",
+                    "Deviation": f"{signal_data['deviation']:.4f}",
+                    "Timestamp": signal_data['timestamp']
+                })
+            
+            if signal_data["signal"] in ["EXIT LONG", "EXIT SHORT"]:
+                for position in st.session_state.current_profile.positions:
+                    if position['ticker'] == ticker:
+                        exit_type = "Long" if position['direction'] == 'long' else "Short"
+                        exit_signals_for_open_positions.append({
+                            "Ticker": ticker,
+                            "Signal": f"EXIT {exit_type}",
+                            "Price": f"${signal_data['price']:.2f}",
+                            "EMA": f"${signal_data['ema']:.2f}",
+                            "Deviation": f"{signal_data['deviation']:.4f}",
+                            "Timestamp": signal_data['timestamp']
+                        })
+                        break
+            
+        except Exception as e:
+            error_message = f"Error updating signal for {ticker}: {str(e)}"
+            show_temporary_message(error_message, "error")
+            tickers_to_remove.append(ticker)
+        
+        progress = (i + 1) / total_tickers
+        progress_bar.progress(progress)
+    
+    for ticker in tickers_to_remove:
+        del st.session_state.tickers[ticker]
+    
+    if tickers_to_remove:
+        show_temporary_message(f"Removed {len(tickers_to_remove)} ticker(s) due to data fetching errors.", "warning")
+    
+    status_text.empty()
+    progress_bar.empty()
+
+    st.session_state.active_signals = active_signals
+    st.session_state.exit_signals_for_open_positions = exit_signals_for_open_positions
+
+def display_active_signals():
+    st.subheader("Active Signals")
+    if hasattr(st.session_state, 'active_signals') and st.session_state.active_signals:
+        df = pd.DataFrame(st.session_state.active_signals)
+        st.dataframe(df, hide_index=True, use_container_width=True)
+    else:
+        st.info("No active signals at the moment.")
+    
+    if hasattr(st.session_state, 'exit_signals_for_open_positions') and st.session_state.exit_signals_for_open_positions:
+        st.subheader("Exit Signals for Open Positions", help="These are exit signals for currently open positions. Action required.")
+        df_exit = pd.DataFrame(st.session_state.exit_signals_for_open_positions)
+        st.dataframe(df_exit, hide_index=True, use_container_width=True)
+        st.markdown('<p style="color:red;">Warning: These are exit signals for your open positions. Please review and take appropriate action.</p>', unsafe_allow_html=True)
+
+def export_watchlist_to_csv():
+    data = []
+    for ticker, ticker_data in st.session_state.tickers.items():
+        data.append({
+            "Ticker": ticker,
+            "EMA Period": ticker_data["ema_period"],
+            "Threshold": ticker_data["threshold"],
+            "Stop Loss %": ticker_data["stop_loss_percent"],
+            "Price Threshold": ticker_data["price_threshold"]
+        })
+    df = pd.DataFrame(data)
+    return df.to_csv(index=False).encode('utf-8')
+
+def import_watchlist_from_csv(uploaded_file):
+    try:
+        df = pd.read_csv(uploaded_file)
+        for _, row in df.iterrows():
+            ticker = row['Ticker']
+            st.session_state.current_profile.add_to_watchlist(
+                ticker,
+                int(row['EMA Period']),
+                float(row['Threshold']),
+                float(row['Stop Loss %']),
+                float(row['Price Threshold'])
+            )
+        save_profile(st.session_state.current_profile)
+        st.session_state.tickers = st.session_state.current_profile.watchlist
+        show_temporary_message(f"Imported {len(df)} tickers to the watchlist.", "success")
+    except Exception as e:
+        show_temporary_message(f"Error importing watchlist: {str(e)}", "error")
+
 def main():
     st.title("Signals")
 
@@ -823,37 +859,6 @@ def main():
             st.write("No tickers added yet. Use the sidebar to add tickers or import a watchlist.")
     else:
         st.write("Please select or create a profile to start.")
-
-def export_watchlist_to_csv():
-    data = []
-    for ticker, ticker_data in st.session_state.tickers.items():
-        data.append({
-            "Ticker": ticker,
-            "EMA Period": ticker_data["ema_period"],
-            "Threshold": ticker_data["threshold"],
-            "Stop Loss %": ticker_data["stop_loss_percent"],
-            "Price Threshold": ticker_data["price_threshold"]
-        })
-    df = pd.DataFrame(data)
-    return df.to_csv(index=False).encode('utf-8')
-
-def import_watchlist_from_csv(uploaded_file):
-    try:
-        df = pd.read_csv(uploaded_file)
-        for _, row in df.iterrows():
-            ticker = row['Ticker']
-            st.session_state.current_profile.add_to_watchlist(
-                ticker,
-                int(row['EMA Period']),
-                float(row['Threshold']),
-                float(row['Stop Loss %']),
-                float(row['Price Threshold'])
-            )
-        save_profile(st.session_state.current_profile)
-        st.session_state.tickers = st.session_state.current_profile.watchlist
-        show_temporary_message(f"Imported {len(df)} tickers to the watchlist.", "success")
-    except Exception as e:
-        show_temporary_message(f"Error importing watchlist: {str(e)}", "error")
 
 if __name__ == "__main__":
     main()
