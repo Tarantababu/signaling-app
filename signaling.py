@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
 import time as tm
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -335,7 +335,7 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
             else:
                 sell_signals.append(i)
                 fig.add_trace(go.Scatter(x=[price_based_df.index[i]], y=[price_based_df['High'].iloc[i]], mode='markers',
-                                        marker=dict(symbol='triangle-down', size=10, color='red'),
+                                         marker=dict(symbol='triangle-down', size=10, color='red'),
                                          name='Sell Signal'),
                               row=1, col=1)
 
@@ -378,11 +378,11 @@ def get_market_close_time():
     now = datetime.now(ny_tz)
     market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
     
-    if now.time() > datetime.time(16, 0) or now.weekday() >= 5:
+    if now.time() > datetime(2000, 1, 1, 16, 0).time() or now.weekday() >= 5:
         days_ahead = 1 if now.weekday() < 4 else (7 - now.weekday())
         market_close += timedelta(days=days_ahead)
     
-    if now.time() < datetime.time(9, 30):
+    if now.time() < datetime(2000, 1, 1, 9, 30).time():
         market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
     
     return market_close
