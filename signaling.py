@@ -19,7 +19,7 @@ TELEGRAM_CHAT_ID = "5611879467"
 def calculate_ema(data, period):
     return data.ewm(span=period, adjust=False).mean()
 
-def fetch_yahoo_finance_data(ticker, interval="1m", period="1d"):
+def fetch_yahoo_finance_data(ticker, interval="1m", period="60d"):
     try:
         stock = yf.Ticker(ticker)
         df = stock.history(interval=interval, period=period)
