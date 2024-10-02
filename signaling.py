@@ -47,6 +47,54 @@ class SignalGenerator:
     def calculate_deviation(self, price, ema):
         return (price - ema) / ema if ema != 0 else 0
 
+    def convert_to_price_based_candles(self, data):
+        price_candles = []
+        current_candle = data.iloc[0].copy()
+        last_price = current_candle['Close']
+
+        for i in range(1, len(data)):
+            price_change = abs(data['Close'].iloc[i] - last_price) / last_price
+            if price_change >= self.price_threshold:
+                price_candles.append(current_candle)
+                current_candle = data.iloc[i].copy()
+                last_price = current_candle['Close']
+            else:
+                current_candle['High'] = max(current_candle['High'], data['High'].iloc[i])
+                current_candle['Low'] = min(current_candle['Low'], data['Low'].iloc[i])
+                current_candle['Close'] = data['Close'].iloc[i]
+                current_candle['Volume'] += data['Volume'].iloc[i]
+
+        price_candles.append(current_candle)
+        return pd.DataFrame(price_candles)
+
+    def generate_signal(self, data):
+        price_based_data = self.convert_to_price_based_candles(data)
+        if price_based_data.empty:
+            return None, None, None, None
+        
+        ema_series = self.calculate_ema(price_based_data)
+        price_based_data['EMA'] = ema_series
+
+        for i in range(len(price_based_data)):
+            price = price_based_data['Close'].iloc[i]
+            ema = ema_series.iloc[i]
+            deviation = self.calculate_deviation(price, ema)
+
+            if not self.positions and abs(deviation) > self.threshold:
+                if deviation < 0:
+                    self.enter_trade('long', price, ema, i)
+                else:
+                    self.enter_trade('short', price, ema, i)
+            elif self.positions:
+                self.check_exit_condition(price, ema, i)
+
+        latest_signal = self.signals[-1] if self.signals else None
+        latest_price = price_based_data['Close'].iloc[-1]
+        latest_ema = ema_series.iloc[-1]
+        latest_deviation = self.calculate_deviation(latest_price, latest_ema)
+
+        return latest_signal, latest_price, latest_ema, latest_deviation, price_based_data
+
     def enter_trade(self, direction, price, ema, index):
         self.positions.append({
             'direction': direction,
@@ -83,32 +131,6 @@ class SignalGenerator:
             'ema': current_ema,
             'reason': reason
         })
-
-    def generate_signal(self, data):
-        if data.empty:
-            return None, None, None, None
-        ema_series = self.calculate_ema(data)
-        signals = []
-
-        for i in range(len(data)):
-            price = data['Close'].iloc[i]
-            ema = ema_series.iloc[i]
-            deviation = self.calculate_deviation(price, ema)
-
-            if not self.positions and abs(deviation) > self.threshold:
-                if deviation < 0:
-                    self.enter_trade('long', price, ema, i)
-                else:
-                    self.enter_trade('short', price, ema, i)
-            elif self.positions:
-                self.check_exit_condition(price, ema, i)
-
-        latest_signal = self.signals[-1] if self.signals else None
-        latest_price = data['Close'].iloc[-1]
-        latest_ema = ema_series.iloc[-1]
-        latest_deviation = self.calculate_deviation(latest_price, latest_ema)
-
-        return latest_signal, latest_price, latest_ema, latest_deviation
 
 class Profile:
     def __init__(self, name):
@@ -242,7 +264,7 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
             "sl_price": None,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
-    signal, price, ema, deviation = generator.generate_signal(data)
+    signal, price, ema, deviation, _ = generator.generate_signal(data)
     
     sl_price = None
     if signal and signal['signal'] in ['BUY', 'SELL']:
@@ -269,66 +291,60 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
         show_temporary_message(f"No data available to create chart for {ticker}", "warning")
         return None, None, None
     
-    ema = calculate_ema(data['Close'], ema_period)
+    generator = SignalGenerator(ticker, ema_period, threshold, stop_loss_percent, price_threshold)
+    _, _, _, _, price_based_data = generator.generate_signal(data)
     
-    data['EMA'] = ema
-    data['Deviation'] = (data['Close'] - data['EMA']) / data['EMA']
-
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                        vertical_spacing=0.03, subplot_titles=(f'{ticker} Price and EMA', 'Deviation'),
+                        vertical_spacing=0.03, subplot_titles=(f'{ticker} Price-Based Candles and EMA', 'Deviation'),
                         row_heights=[0.7, 0.3])
     
-    fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'],
-                                 low=data['Low'], close=data['Close'], name='Price'),
+    fig.add_trace(go.Candlestick(x=price_based_data.index, open=price_based_data['Open'], high=price_based_data['High'],
+                                 low=price_based_data['Low'], close=price_based_data['Close'], name='Price'),
                   row=1, col=1)
-    fig.add_trace(go.Scatter(x=data.index, y=data['EMA'], name=f'EMA-{ema_period}', line=dict(color='orange')),
+    fig.add_trace(go.Scatter(x=price_based_data.index, y=price_based_data['EMA'], name=f'EMA-{ema_period}', line=dict(color='orange')),
                   row=1, col=1)
     
-    fig.add_trace(go.Scatter(x=data.index, y=data['Deviation'], name='Deviation', line=dict(color='purple')),
+    price_based_data['Deviation'] = (price_based_data['Close'] - price_based_data['EMA']) / price_based_data['EMA']
+    fig.add_trace(go.Scatter(x=price_based_data.index, y=price_based_data['Deviation'], name='Deviation', line=dict(color='purple')),
                   row=2, col=1)
     fig.add_hline(y=threshold, line_dash="dash", line_color="green", row=2, col=1)
     fig.add_hline(y=-threshold, line_dash="dash", line_color="red", row=2, col=1)
     
-    buy_signals = data[data['Deviation'] < -threshold]
-    sell_signals = data[data['Deviation'] > threshold]
+    buy_signals = price_based_data[price_based_data['Deviation'] < -threshold]
+    sell_signals = price_based_data[price_based_data['Deviation'] > threshold]
 
-    # Add buy signals
     fig.add_trace(go.Scatter(x=buy_signals.index, y=buy_signals['Low'], mode='markers',
                              marker=dict(symbol='triangle-up', size=10, color='green'),
                              name='Buy Signal'),
                   row=1, col=1)
-
-    # Add sell signals
     fig.add_trace(go.Scatter(x=sell_signals.index, y=sell_signals['High'], mode='markers',
                              marker=dict(symbol='triangle-down', size=10, color='red'),
                              name='Sell Signal'),
                   row=1, col=1)
 
-    # Add exit long signals
     for buy_index in buy_signals.index:
-        exit_long = data.loc[buy_index:][data['Close'] >= data['EMA']].index
+        exit_long = price_based_data.loc[buy_index:][price_based_data['Close'] >= price_based_data['EMA']].index
         if not exit_long.empty:
             exit_long_index = exit_long[0]
-            fig.add_trace(go.Scatter(x=[exit_long_index], y=[data.loc[exit_long_index, 'High']], mode='markers',
+            fig.add_trace(go.Scatter(x=[exit_long_index], y=[price_based_data.loc[exit_long_index, 'High']], mode='markers',
                                      marker=dict(symbol='square', size=8, color='blue'),
                                      name='Exit Long'),
                           row=1, col=1)
 
-    # Add exit short signals
     for sell_index in sell_signals.index:
-        exit_short = data.loc[sell_index:][data['Close'] <= data['EMA']].index
+        exit_short = price_based_data.loc[sell_index:][price_based_data['Close'] <= price_based_data['EMA']].index
         if not exit_short.empty:
             exit_short_index = exit_short[0]
-            fig.add_trace(go.Scatter(x=[exit_short_index], y=[data.loc[exit_short_index, 'Low']], mode='markers',
+            fig.add_trace(go.Scatter(x=[exit_short_index], y=[price_based_data.loc[exit_short_index, 'Low']], mode='markers',
                                      marker=dict(symbol='square', size=8, color='orange'),
                                      name='Exit Short'),
                           row=1, col=1)
 
-    fig.update_layout(height=800, title_text=f"{ticker} Analysis")
+    fig.update_layout(height=800, title_text=f"{ticker} Price-Based Analysis")
     fig.update_xaxes(rangeslider_visible=False)
     
-    current_price = data['Close'].iloc[-1]
-    last_updated = data.index[-1]
+    current_price = price_based_data['Close'].iloc[-1]
+    last_updated = price_based_data.index[-1]
     
     return fig, current_price, last_updated
 
@@ -600,25 +616,27 @@ def explain_strategy():
 
     This trading strategy is based on the concept of mean reversion using Exponential Moving Average (EMA) and price deviation. Here's a detailed explanation of how it works:
 
-    1. **EMA Calculation**: We calculate the Exponential Moving Average (EMA) for each stock. The EMA gives more weight to recent prices and responds more quickly to price changes than a simple moving average.
+    1. **Price-Based Candles**: Instead of using fixed time intervals, we create candles based on price movements. A new candle forms when the price changes by a certain percentage (defined by the Price Threshold parameter).
 
-    2. **Deviation Calculation**: We calculate the deviation of the current price from the EMA. This is expressed as a percentage: (Price - EMA) / EMA.
+    2. **EMA Calculation**: We calculate the Exponential Moving Average (EMA) for each price-based candle. The EMA gives more weight to recent prices and responds more quickly to price changes than a simple moving average.
 
-    3. **Entry Signals**:
+    3. **Deviation Calculation**: We calculate the deviation of the current price from the EMA. This is expressed as a percentage: (Price - EMA) / EMA.
+
+    4. **Entry Signals**:
        - **Buy Signal**: When the deviation becomes less than the negative threshold (e.g., -2%), it indicates the price has fallen significantly below the EMA. This is seen as a potential buying opportunity, anticipating that the price will rise back towards the EMA.
        - **Sell Signal**: When the deviation becomes greater than the positive threshold (e.g., +2%), it indicates the price has risen significantly above the EMA. This is seen as a potential selling opportunity, anticipating that the price will fall back towards the EMA.
 
-    4. **Exit Signals**:
+    5. **Exit Signals**:
        - **Exit Long**: For a long position, we exit when the price crosses above the EMA. This is based on the assumption that the mean reversion is complete.
        - **Exit Short**: For a short position, we exit when the price crosses below the EMA, again assuming the mean reversion is complete.
 
-    5. **Stop Loss**: A stop loss is implemented to limit potential losses. If the price moves against the position by a certain percentage, the position is closed.
+    6. **Stop Loss**: A stop loss is implemented to limit potential losses. If the price moves against the position by a certain percentage, the position is closed.
 
-    6. **Price Threshold**: This is used to filter out minor price movements and reduce the number of false signals.
+    7. **Price Threshold**: This is used to filter out minor price movements and reduce the number of false signals. It determines when a new price-based candle is formed.
 
-    The strategy aims to capitalize on short-term price fluctuations around the EMA, assuming that prices tend to revert to their mean (in this case, the EMA) over time.
+    The strategy aims to capitalize on price fluctuations around the EMA, assuming that prices tend to revert to their mean (in this case, the EMA) over time. By using price-based candles, the strategy can be more responsive to significant price movements and potentially reduce noise during periods of low volatility.
 
-    **Note**: While this strategy can be effective in ranging markets, it may not perform well in strongly trending markets. Always consider the overall market context and perform thorough backtesting before using any trading strategy with real money.
+    **Note**: While this strategy can be effective in ranging markets, it may not perform well in strongly trending markets. Always consider the overall market context and perform thorough backtesting before using any trading strategy with real money. The price-based approach may be more responsive to significant market moves but could also be more sensitive to volatility.
     """)
 
 def profile_management():
@@ -724,7 +742,7 @@ def import_watchlist_from_csv(uploaded_file):
         show_temporary_message(f"Error importing watchlist: {str(e)}", "error")
 
 def main():
-    st.title("Stock Trading Signals")
+    st.title("Price-Based Stock Trading Signals")
 
     if 'tickers' not in st.session_state:
         st.session_state.tickers = {}
