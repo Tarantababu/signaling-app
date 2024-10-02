@@ -484,8 +484,19 @@ def refresh_signals():
 
 def auto_refresh():
     if st.session_state.get('auto_refresh', False):
-        refresh_signals()
-        st.experimental_rerun()
+        if 'last_refresh' not in st.session_state:
+            st.session_state.last_refresh = time.time()
+        
+        current_time = time.time()
+        elapsed_time = current_time - st.session_state.last_refresh
+        
+        if elapsed_time >= st.session_state.refresh_interval * 60:  # Convert minutes to seconds
+            refresh_signals()
+            st.session_state.last_refresh = current_time
+            st.experimental_rerun()
+        else:
+            remaining_time = st.session_state.refresh_interval * 60 - elapsed_time
+            st.write(f"Next refresh in {int(remaining_time)} seconds")
 
 def display_market_close_timer():
     market_close = get_market_close_time()
@@ -728,6 +739,8 @@ def main():
         st.session_state.auto_refresh = False
     if 'refresh_interval' not in st.session_state:
         st.session_state.refresh_interval = 5
+    if 'last_refresh' not in st.session_state:
+        st.session_state.last_refresh = time.time()
 
     # Add UI for Alpha Vantage API key input
     st.sidebar.header("API Configuration")
@@ -787,7 +800,7 @@ def main():
 
         st.header("Watchlist and Signals")
 
-        if st.button("Refresh All Signals") or (st.session_state.auto_refresh and st.empty()):
+        if st.button("Refresh All Signals"):
             refresh_signals()
             exit_signals = check_exit_signals(st.session_state.current_profile, generate_signal)
             st.session_state.exit_signals_for_open_positions = [
@@ -798,12 +811,11 @@ def main():
                     "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 } for ticker, price, signal in exit_signals
             ]
+            st.session_state.last_refresh = time.time()
             show_temporary_message("All signals refreshed!", "success")
-            
+        
         if st.session_state.auto_refresh:
-            st.write(f"Auto-refreshing every {st.session_state.refresh_interval} minutes")
             auto_refresh()
-            st.empty()
 
         display_active_signals()
 
