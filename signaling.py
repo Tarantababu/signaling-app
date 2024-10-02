@@ -335,7 +335,7 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
             else:
                 sell_signals.append(i)
                 fig.add_trace(go.Scatter(x=[price_based_df.index[i]], y=[price_based_df['High'].iloc[i]], mode='markers',
-                                         marker=dict(symbol='triangle-down', size=10, color='red'),
+                                        marker=dict(symbol='triangle-down', size=10, color='red'),
                                          name='Sell Signal'),
                               row=1, col=1)
 
@@ -383,11 +383,18 @@ def get_market_close_time():
     
     return market_close
 
-def send_message(message):
+def send_new_signals_to_telegram(new_signals):
+    if not new_signals:
+        return "No new signals to send"
+
+    message = "New Active Signals:\n"
+    for signal in new_signals:
+        message += f"{signal['Ticker']}: {signal['Signal']} at {signal['Price']} (SL: {signal['SL Price']})\n"
+
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={TELEGRAM_CHAT_ID}&text={message}"
     try:
         res = requests.get(url)
-        res.raise_for_status()  # Raise an HTTPError for bad responses
+        res.raise_for_status()
         if res.status_code == 200:
             return "sent"
         else:
@@ -397,23 +404,88 @@ def send_message(message):
         print(f"Request failed: {e}")
         return "failed"
 
-def send_signals_to_telegram():
-    active_signals_message = "Active Signals:\n"
-    if hasattr(st.session_state, 'active_signals') and st.session_state.active_signals:
-        for signal in st.session_state.active_signals:
-            active_signals_message += f"{signal['Ticker']}: {signal['Signal']} at {signal['Price']} (SL: {signal['SL Price']})\n"
-    else:
-        active_signals_message += "No active signals at the moment.\n"
+def refresh_signals():
+    progress_bar = st.empty()
+    status_text = st.empty()
+    
+    total_tickers = len(st.session_state.tickers)
+    tickers_to_remove = []
+    active_signals = []
+    new_active_signals = []
+    exit_signals_for_open_positions = []
+    
+    for i, (ticker, ticker_data) in enumerate(st.session_state.tickers.items()):
+        status_text.text(f"Refreshing signal for {ticker}...")
+        try:
+            signal_data = generate_signal(
+                ticker, 
+                ticker_data["ema_period"], 
+                ticker_data["threshold"], 
+                ticker_data["stop_loss_percent"],
+                ticker_data["price_threshold"]
+            )
+            
+            if signal_data["signal"] in ["BUY", "SELL"]:
+                new_signal = {
+                    "Ticker": ticker,
+                    "Signal": signal_data['signal'],
+                    "Price": f"${signal_data['price']:.2f}",
+                    "SL Price": f"${signal_data['sl_price']:.2f}" if signal_data['sl_price'] else "N/A",
+                    "EMA": f"${signal_data['ema']:.2f}",
+                    "Deviation": f"{signal_data['deviation']:.4f}",
+                    "Timestamp": signal_data['timestamp']
+                }
+                active_signals.append(new_signal)
+                
+                # Check if this is a new signal
+                last_signal = ticker_data.get("last_signal", {})
+                if last_signal.get("signal") != signal_data["signal"] or last_signal.get("price") != signal_data["price"]:
+                    new_active_signals.append(new_signal)
+            
+            if signal_data["signal"] in ["EXIT LONG", "EXIT SHORT"]:
+                for position in st.session_state.current_profile.positions:
+                    if position['ticker'] == ticker:
+                        exit_type = "Long" if position['direction'] == 'long' else "Short"
+                        exit_signals_for_open_positions.append({
+                            "Ticker": ticker,
+                            "Signal": f"EXIT {exit_type}",
+                            "Price": f"${signal_data['price']:.2f}",
+                            "EMA": f"${signal_data['ema']:.2f}",
+                            "Deviation": f"{signal_data['deviation']:.4f}",
+                            "Timestamp": signal_data['timestamp']
+                        })
+                        break
+            
+            st.session_state.tickers[ticker]["last_signal"] = signal_data
+            
+        except Exception as e:
+            error_message = f"Error updating signal for {ticker}: {str(e)}"
+            show_temporary_message(error_message, "error")
+            tickers_to_remove.append(ticker)
+        
+        progress = (i + 1) / total_tickers
+        progress_bar.progress(progress)
+    
+    for ticker in tickers_to_remove:
+        del st.session_state.tickers[ticker]
+    
+    if tickers_to_remove:
+        show_temporary_message(f"Removed {len(tickers_to_remove)} ticker(s) due to data fetching errors.", "warning")
+    
+    status_text.empty()
+    progress_bar.empty()
 
-    exit_signals_message = "Exit Signals for Open Positions:\n"
-    if hasattr(st.session_state, 'exit_signals_for_open_positions') and st.session_state.exit_signals_for_open_positions:
-        for signal in st.session_state.exit_signals_for_open_positions:
-            exit_signals_message += f"{signal['Ticker']}: {signal['Signal']} at {signal['Price']}\n"
-    else:
-        exit_signals_message += "No exit signals for open positions at the moment.\n"
+    st.session_state.active_signals = active_signals
+    st.session_state.exit_signals_for_open_positions = exit_signals_for_open_positions
 
-    full_message = active_signals_message + "\n" + exit_signals_message
-    return send_message(full_message)
+    # Send new signals to Telegram
+    if new_active_signals:
+        send_new_signals_to_telegram(new_active_signals)
+
+def auto_refresh():
+    if st.session_state.get('auto_refresh', False):
+        refresh_signals()
+        st.experimental_rerun()
 
 def display_market_close_timer():
     market_close = get_market_close_time()
@@ -428,15 +500,6 @@ def display_market_close_timer():
 
     if time_remaining.days == 0 and hours == 0 and minutes < 30:
         st.sidebar.warning("⚠️ Less than 30 minutes until market close!")
-        
-        if 'telegram_sent' not in st.session_state or not st.session_state.telegram_sent:
-            if send_signals_to_telegram() == "sent":
-                st.session_state.telegram_sent = True
-                st.sidebar.success("Signals sent to Telegram!")
-            else:
-                st.sidebar.error("Failed to send signals to Telegram. Please check your connection and try again.")
-    else:
-        st.session_state.telegram_sent = False
 
 def display_profile(profile):
     st.header(f"Profile: {profile.name}")
@@ -605,72 +668,6 @@ def profile_management():
 
         display_profile(st.session_state.current_profile)
 
-def refresh_signals():
-    progress_bar = st.empty()
-    status_text = st.empty()
-    
-    total_tickers = len(st.session_state.tickers)
-    tickers_to_remove = []
-    active_signals = []
-    exit_signals_for_open_positions = []
-    
-    for i, (ticker, ticker_data) in enumerate(st.session_state.tickers.items()):
-        status_text.text(f"Refreshing signal for {ticker}...")
-        try:
-            signal_data = generate_signal(
-                ticker, 
-                ticker_data["ema_period"], 
-                ticker_data["threshold"], 
-                ticker_data["stop_loss_percent"],
-                ticker_data["price_threshold"]
-            )
-            st.session_state.tickers[ticker]["last_signal"] = signal_data
-            
-            if signal_data["signal"] in ["BUY", "SELL"]:
-                active_signals.append({
-                    "Ticker": ticker,
-                    "Signal": signal_data['signal'],
-                    "Price": f"${signal_data['price']:.2f}",
-                    "SL Price": f"${signal_data['sl_price']:.2f}" if signal_data['sl_price'] else "N/A",
-                    "EMA": f"${signal_data['ema']:.2f}",
-                    "Deviation": f"{signal_data['deviation']:.4f}",
-                    "Timestamp": signal_data['timestamp']
-                })
-            
-            if signal_data["signal"] in ["EXIT LONG", "EXIT SHORT"]:
-                for position in st.session_state.current_profile.positions:
-                    if position['ticker'] == ticker:
-                        exit_type = "Long" if position['direction'] == 'long' else "Short"
-                        exit_signals_for_open_positions.append({
-                            "Ticker": ticker,
-                            "Signal": f"EXIT {exit_type}",
-                            "Price": f"${signal_data['price']:.2f}",
-                            "EMA": f"${signal_data['ema']:.2f}",
-                            "Deviation": f"{signal_data['deviation']:.4f}",
-                            "Timestamp": signal_data['timestamp']
-                        })
-                        break
-            
-        except Exception as e:
-            error_message = f"Error updating signal for {ticker}: {str(e)}"
-            show_temporary_message(error_message, "error")
-            tickers_to_remove.append(ticker)
-        
-        progress = (i + 1) / total_tickers
-        progress_bar.progress(progress)
-    
-    for ticker in tickers_to_remove:
-        del st.session_state.tickers[ticker]
-    
-    if tickers_to_remove:
-        show_temporary_message(f"Removed {len(tickers_to_remove)} ticker(s) due to data fetching errors.", "warning")
-    
-    status_text.empty()
-    progress_bar.empty()
-
-    st.session_state.active_signals = active_signals
-    st.session_state.exit_signals_for_open_positions = exit_signals_for_open_positions
-
 def display_active_signals():
     st.subheader("Active Signals")
     if hasattr(st.session_state, 'active_signals') and st.session_state.active_signals:
@@ -727,14 +724,21 @@ def main():
         st.session_state.active_signals = []
     if 'exit_signals_for_open_positions' not in st.session_state:
         st.session_state.exit_signals_for_open_positions = []
-    if 'telegram_sent' not in st.session_state:
-        st.session_state.telegram_sent = False
+    if 'auto_refresh' not in st.session_state:
+        st.session_state.auto_refresh = False
+    if 'refresh_interval' not in st.session_state:
+        st.session_state.refresh_interval = 5
 
     # Add UI for Alpha Vantage API key input
     st.sidebar.header("API Configuration")
     api_key = st.sidebar.text_input("Enter Alpha Vantage API Key", type="password")
     if api_key:
         st.session_state.alpha_vantage_api_key = api_key
+
+    # Add UI for auto-refresh configuration
+    st.sidebar.header("Auto Refresh Configuration")
+    st.session_state.auto_refresh = st.sidebar.checkbox("Enable Auto Refresh", value=st.session_state.auto_refresh)
+    st.session_state.refresh_interval = st.sidebar.number_input("Refresh Interval (minutes)", min_value=1, value=st.session_state.refresh_interval)
 
     display_market_close_timer()
     profile_management()
@@ -783,7 +787,7 @@ def main():
 
         st.header("Watchlist and Signals")
 
-        if st.button("Refresh All Signals"):
+        if st.button("Refresh All Signals") or (st.session_state.auto_refresh and st.empty()):
             refresh_signals()
             exit_signals = check_exit_signals(st.session_state.current_profile, generate_signal)
             st.session_state.exit_signals_for_open_positions = [
@@ -795,7 +799,11 @@ def main():
                 } for ticker, price, signal in exit_signals
             ]
             show_temporary_message("All signals refreshed!", "success")
-            st.experimental_rerun()
+            
+        if st.session_state.auto_refresh:
+            st.write(f"Auto-refreshing every {st.session_state.refresh_interval} minutes")
+            auto_refresh()
+            st.empty()
 
         display_active_signals()
 
