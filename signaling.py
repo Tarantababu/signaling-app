@@ -274,7 +274,7 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
     data = fetch_alpha_vantage_data(ticker)
     if data.empty:
         show_temporary_message(f"No data available to create chart for {ticker}", "warning")
-        return None
+        return None, None, None
     
     ema = calculate_ema(data['Close'], ema_period)
     
@@ -359,7 +359,11 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
 
     fig.update_layout(height=800, title_text=f"{ticker} Price-Based Analysis")
     fig.update_xaxes(rangeslider_visible=False)
-    return fig
+    
+    current_price = price_based_df['Close'].iloc[-1]
+    last_updated = price_based_df.index[-1]
+    
+    return fig, current_price, last_updated
 
 def fetch_current_price(ticker):
     try:
@@ -484,8 +488,19 @@ def refresh_signals():
 
 def auto_refresh():
     if st.session_state.get('auto_refresh', False):
-        refresh_signals()
-        st.experimental_rerun()
+        if 'last_refresh' not in st.session_state:
+            st.session_state.last_refresh = time.time()
+        
+        current_time = time.time()
+        elapsed_time = current_time - st.session_state.last_refresh
+        
+        if elapsed_time >= st.session_state.refresh_interval * 60:  # Convert minutes to seconds
+            refresh_signals()
+            st.session_state.last_refresh = current_time
+            st.experimental_rerun()
+        else:
+            remaining_time = st.session_state.refresh_interval * 60 - elapsed_time
+            st.write(f"Next refresh in {int(remaining_time)} seconds")
 
 def display_market_close_timer():
     market_close = get_market_close_time()
@@ -787,7 +802,7 @@ def main():
 
         st.header("Watchlist and Signals")
 
-        if st.button("Refresh All Signals") or (st.session_state.auto_refresh and st.empty()):
+        if st.button("Refresh All Signals"):
             refresh_signals()
             exit_signals = check_exit_signals(st.session_state.current_profile, generate_signal)
             st.session_state.exit_signals_for_open_positions = [
@@ -798,12 +813,11 @@ def main():
                     "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 } for ticker, price, signal in exit_signals
             ]
+            st.session_state.last_refresh = time.time()
             show_temporary_message("All signals refreshed!", "success")
-            
+        
         if st.session_state.auto_refresh:
-            st.write(f"Auto-refreshing every {st.session_state.refresh_interval} minutes")
             auto_refresh()
-            st.empty()
 
         display_active_signals()
 
@@ -840,7 +854,7 @@ def main():
             if selected_ticker:
                 st.subheader(f"Chart for {selected_ticker}")
                 ticker_data = st.session_state.current_profile.watchlist[selected_ticker]
-                chart = create_chart(
+                chart, current_price, last_updated = create_chart(
                     selected_ticker,
                     ticker_data["ema_period"],
                     ticker_data["threshold"],
@@ -849,6 +863,8 @@ def main():
                 )
                 if chart:
                     st.plotly_chart(chart, use_container_width=True)
+                    st.write(f"Current Price: ${current_price:.2f}")
+                    st.write(f"Last Updated: {last_updated}")
             
             if not df.equals(edited_df):
                 for index, row in edited_df.iterrows():
