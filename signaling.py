@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import csv
 import io
-import time as tm
+import time
 import threading
 import json
 import pytz
@@ -743,6 +743,8 @@ def main():
         st.session_state.auto_refresh = False
     if 'refresh_interval' not in st.session_state:
         st.session_state.refresh_interval = 5
+    if 'last_refresh' not in st.session_state:
+        st.session_state.last_refresh = time.time()
 
     # Add UI for Alpha Vantage API key input
     st.sidebar.header("API Configuration")
