@@ -1,12 +1,12 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
+import time as tm
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import csv
 import io
-import time
 import threading
 import json
 import pytz
@@ -378,11 +378,11 @@ def get_market_close_time():
     now = datetime.now(ny_tz)
     market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
     
-    if now.time() > time(16, 0) or now.weekday() >= 5:
+    if now.time() > datetime.time(16, 0) or now.weekday() >= 5:
         days_ahead = 1 if now.weekday() < 4 else (7 - now.weekday())
         market_close += timedelta(days=days_ahead)
     
-    if now.time() < time(9, 30):
+    if now.time() < datetime.time(9, 30):
         market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
     
     return market_close
@@ -489,9 +489,9 @@ def refresh_signals():
 def auto_refresh():
     if st.session_state.get('auto_refresh', False):
         if 'last_refresh' not in st.session_state:
-            st.session_state.last_refresh = time.time()
+            st.session_state.last_refresh = tm.time()
         
-        current_time = time.time()
+        current_time = tm.time()
         elapsed_time = current_time - st.session_state.last_refresh
         
         if elapsed_time >= st.session_state.refresh_interval * 60:  # Convert minutes to seconds
@@ -744,7 +744,7 @@ def main():
     if 'refresh_interval' not in st.session_state:
         st.session_state.refresh_interval = 5
     if 'last_refresh' not in st.session_state:
-        st.session_state.last_refresh = time.time()
+        st.session_state.last_refresh = tm.time()
 
     # Add UI for Alpha Vantage API key input
     st.sidebar.header("API Configuration")
@@ -805,18 +805,18 @@ def main():
         st.header("Watchlist and Signals")
 
         if st.button("Refresh All Signals"):
-            refresh_signals()
-            exit_signals = check_exit_signals(st.session_state.current_profile, generate_signal)
-            st.session_state.exit_signals_for_open_positions = [
-                {
-                    "Ticker": ticker,
-                    "Signal": signal,
-                    "Price": f"${price:.2f}",
-                    "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                } for ticker, price, signal in exit_signals
-            ]
-            st.session_state.last_refresh = time.time()
-            show_temporary_message("All signals refreshed!", "success")
+        refresh_signals()
+        exit_signals = check_exit_signals(st.session_state.current_profile, generate_signal)
+        st.session_state.exit_signals_for_open_positions = [
+            {
+                "Ticker": ticker,
+                "Signal": signal,
+                "Price": f"${price:.2f}",
+                "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            } for ticker, price, signal in exit_signals
+        ]
+        st.session_state.last_refresh = tm.time()
+        show_temporary_message("All signals refreshed!", "success")
         
         if st.session_state.auto_refresh:
             auto_refresh()
