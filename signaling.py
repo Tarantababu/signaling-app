@@ -12,7 +12,6 @@ import json
 import pytz
 import requests
 
-ALPHA_VANTAGE_API_KEY = "1260MG2P7VRFWMVA"  # Replace with your actual API key
 TELEGRAM_TOKEN = "7148511647:AAFlMohYiqPF2GQFtri2qW4H0WU2-j174TQ"
 TELEGRAM_CHAT_ID = "5611879467"
 
@@ -20,7 +19,12 @@ def calculate_ema(data, period):
     return data.ewm(span=period, adjust=False).mean()
 
 def fetch_alpha_vantage_data(ticker, interval="1min"):
-    url = f'https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={ticker}&interval={interval}&outputsize=full&apikey={ALPHA_VANTAGE_API_KEY}'
+    api_key = st.session_state.get('alpha_vantage_api_key', '')
+    if not api_key:
+        st.error("Alpha Vantage API key is not set. Please enter it in the sidebar.")
+        return pd.DataFrame()
+
+    url = f'https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={ticker}&interval={interval}&outputsize=full&apikey={api_key}'
     r = requests.get(url)
     data = r.json()
     
@@ -247,7 +251,6 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
         }
     signal, price, ema, deviation = generator.generate_signal(data)
     
-    # Calculate SL price
     sl_price = None
     if signal and signal['signal'] in ['BUY', 'SELL']:
         if signal['signal'] == 'BUY':
@@ -318,31 +321,41 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
     for time in time_intervals:
         fig.add_vline(x=time, line_width=1, line_dash="dash", line_color="rgba(100,100,100,0.2)", row="all")
 
+    buy_signals = []
+    sell_signals = []
+
     for i in range(1, len(price_based_df)):
         if abs(price_based_df['Deviation'].iloc[i]) > threshold:
             if price_based_df['Deviation'].iloc[i] < 0:
+                buy_signals.append(i)
                 fig.add_trace(go.Scatter(x=[price_based_df.index[i]], y=[price_based_df['Low'].iloc[i]], mode='markers',
                                          marker=dict(symbol='triangle-up', size=10, color='green'),
                                          name='Buy Signal'),
                               row=1, col=1)
             else:
+                sell_signals.append(i)
                 fig.add_trace(go.Scatter(x=[price_based_df.index[i]], y=[price_based_df['High'].iloc[i]], mode='markers',
                                          marker=dict(symbol='triangle-down', size=10, color='red'),
                                          name='Sell Signal'),
                               row=1, col=1)
 
-        if (price_based_df['Close'].iloc[i-1] < price_based_df['EMA'].iloc[i-1] and 
-            price_based_df['Close'].iloc[i] >= price_based_df['EMA'].iloc[i]):
-            fig.add_trace(go.Scatter(x=[price_based_df.index[i]], y=[price_based_df['High'].iloc[i]], mode='markers',
-                                     marker=dict(symbol='square', size=8, color='blue'),
-                                     name='Long Exit'),
-                          row=1, col=1)
-        elif (price_based_df['Close'].iloc[i-1] > price_based_df['EMA'].iloc[i-1] and 
-              price_based_df['Close'].iloc[i] <= price_based_df['EMA'].iloc[i]):
-            fig.add_trace(go.Scatter(x=[price_based_df.index[i]], y=[price_based_df['Low'].iloc[i]], mode='markers',
-                                     marker=dict(symbol='square', size=8, color='orange'),
-                                     name='Short Exit'),
-                          row=1, col=1)
+    for i in range(1, len(price_based_df)):
+        if i in buy_signals:
+            for j in range(i+1, len(price_based_df)):
+                if price_based_df['Close'].iloc[j] >= price_based_df['EMA'].iloc[j]:
+                    fig.add_trace(go.Scatter(x=[price_based_df.index[j]], y=[price_based_df['High'].iloc[j]], mode='markers',
+                                             marker=dict(symbol='square', size=8, color='blue'),
+                                             name='Long Exit'),
+                                  row=1, col=1)
+                    break
+        elif i in sell_signals:
+            for j in range(i+1, len(price_based_df)):
+                if price_based_df['Close'].iloc[j] <= price_based_df['EMA'].iloc[j]:
+                    fig.add_trace(go.Scatter(x=[price_based_df.index[j]], y=[price_based_df['Low'].iloc[j]], mode='markers',
+                                             marker=dict(symbol='square', size=8, color='orange'),
+                                             name='Short Exit'),
+                                  row=1, col=1)
+                    break
 
     fig.update_layout(height=800, title_text=f"{ticker} Price-Based Analysis")
     fig.update_xaxes(rangeslider_visible=False)
@@ -413,11 +426,9 @@ def display_market_close_timer():
     st.sidebar.markdown("### Time to Market Close")
     st.sidebar.markdown(f"{time_remaining.days} days, {hours:02d}:{minutes:02d}:{seconds:02d}")
 
-    # Check if remaining time is less than 30 minutes
     if time_remaining.days == 0 and hours == 0 and minutes < 30:
         st.sidebar.warning("⚠️ Less than 30 minutes until market close!")
         
-        # Send signals to Telegram if not already sent
         if 'telegram_sent' not in st.session_state or not st.session_state.telegram_sent:
             if send_signals_to_telegram() == "sent":
                 st.session_state.telegram_sent = True
@@ -425,7 +436,6 @@ def display_market_close_timer():
             else:
                 st.sidebar.error("Failed to send signals to Telegram. Please check your connection and try again.")
     else:
-        # Reset the telegram_sent flag if it's not within 30 minutes of market close
         st.session_state.telegram_sent = False
 
 def display_profile(profile):
@@ -719,6 +729,12 @@ def main():
         st.session_state.exit_signals_for_open_positions = []
     if 'telegram_sent' not in st.session_state:
         st.session_state.telegram_sent = False
+
+    # Add UI for Alpha Vantage API key input
+    st.sidebar.header("API Configuration")
+    api_key = st.sidebar.text_input("Enter Alpha Vantage API Key", type="password")
+    if api_key:
+        st.session_state.alpha_vantage_api_key = api_key
 
     display_market_close_timer()
     profile_management()
