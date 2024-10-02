@@ -805,18 +805,18 @@ def main():
         st.header("Watchlist and Signals")
 
         if st.button("Refresh All Signals"):
-        refresh_signals()
-        exit_signals = check_exit_signals(st.session_state.current_profile, generate_signal)
-        st.session_state.exit_signals_for_open_positions = [
-            {
-                "Ticker": ticker,
-                "Signal": signal,
-                "Price": f"${price:.2f}",
-                "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            } for ticker, price, signal in exit_signals
-        ]
-        st.session_state.last_refresh = tm.time()
-        show_temporary_message("All signals refreshed!", "success")
+            refresh_signals()
+            exit_signals = check_exit_signals(st.session_state.current_profile, generate_signal)
+            st.session_state.exit_signals_for_open_positions = [
+                {
+                    "Ticker": ticker,
+                    "Signal": signal,
+                    "Price": f"${price:.2f}",
+                    "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                } for ticker, price, signal in exit_signals
+            ]
+            st.session_state.last_refresh = tm.time()
+            show_temporary_message("All signals refreshed!", "success")
         
         if st.session_state.auto_refresh:
             auto_refresh()
