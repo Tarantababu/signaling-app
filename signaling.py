@@ -292,14 +292,37 @@ def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_thresho
     buy_signals = data[data['Deviation'] < -threshold]
     sell_signals = data[data['Deviation'] > threshold]
 
+    # Add buy signals
     fig.add_trace(go.Scatter(x=buy_signals.index, y=buy_signals['Low'], mode='markers',
                              marker=dict(symbol='triangle-up', size=10, color='green'),
                              name='Buy Signal'),
                   row=1, col=1)
+
+    # Add sell signals
     fig.add_trace(go.Scatter(x=sell_signals.index, y=sell_signals['High'], mode='markers',
                              marker=dict(symbol='triangle-down', size=10, color='red'),
                              name='Sell Signal'),
                   row=1, col=1)
+
+    # Add exit long signals
+    for buy_index in buy_signals.index:
+        exit_long = data.loc[buy_index:][data['Close'] >= data['EMA']].index
+        if not exit_long.empty:
+            exit_long_index = exit_long[0]
+            fig.add_trace(go.Scatter(x=[exit_long_index], y=[data.loc[exit_long_index, 'High']], mode='markers',
+                                     marker=dict(symbol='square', size=8, color='blue'),
+                                     name='Exit Long'),
+                          row=1, col=1)
+
+    # Add exit short signals
+    for sell_index in sell_signals.index:
+        exit_short = data.loc[sell_index:][data['Close'] <= data['EMA']].index
+        if not exit_short.empty:
+            exit_short_index = exit_short[0]
+            fig.add_trace(go.Scatter(x=[exit_short_index], y=[data.loc[exit_short_index, 'Low']], mode='markers',
+                                     marker=dict(symbol='square', size=8, color='orange'),
+                                     name='Exit Short'),
+                          row=1, col=1)
 
     fig.update_layout(height=800, title_text=f"{ticker} Analysis")
     fig.update_xaxes(rangeslider_visible=False)
@@ -571,6 +594,33 @@ def check_exit_signals(profile, signal_generator):
 
     return exit_signals
 
+def explain_strategy():
+    st.markdown("""
+    ## How This Trading Strategy Works
+
+    This trading strategy is based on the concept of mean reversion using Exponential Moving Average (EMA) and price deviation. Here's a detailed explanation of how it works:
+
+    1. **EMA Calculation**: We calculate the Exponential Moving Average (EMA) for each stock. The EMA gives more weight to recent prices and responds more quickly to price changes than a simple moving average.
+
+    2. **Deviation Calculation**: We calculate the deviation of the current price from the EMA. This is expressed as a percentage: (Price - EMA) / EMA.
+
+    3. **Entry Signals**:
+       - **Buy Signal**: When the deviation becomes less than the negative threshold (e.g., -2%), it indicates the price has fallen significantly below the EMA. This is seen as a potential buying opportunity, anticipating that the price will rise back towards the EMA.
+       - **Sell Signal**: When the deviation becomes greater than the positive threshold (e.g., +2%), it indicates the price has risen significantly above the EMA. This is seen as a potential selling opportunity, anticipating that the price will fall back towards the EMA.
+
+    4. **Exit Signals**:
+       - **Exit Long**: For a long position, we exit when the price crosses above the EMA. This is based on the assumption that the mean reversion is complete.
+       - **Exit Short**: For a short position, we exit when the price crosses below the EMA, again assuming the mean reversion is complete.
+
+    5. **Stop Loss**: A stop loss is implemented to limit potential losses. If the price moves against the position by a certain percentage, the position is closed.
+
+    6. **Price Threshold**: This is used to filter out minor price movements and reduce the number of false signals.
+
+    The strategy aims to capitalize on short-term price fluctuations around the EMA, assuming that prices tend to revert to their mean (in this case, the EMA) over time.
+
+    **Note**: While this strategy can be effective in ranging markets, it may not perform well in strongly trending markets. Always consider the overall market context and perform thorough backtesting before using any trading strategy with real money.
+    """)
+
 def profile_management():
     if 'profiles' not in st.session_state:
         st.session_state.profiles = load_profiles()
@@ -674,7 +724,7 @@ def import_watchlist_from_csv(uploaded_file):
         show_temporary_message(f"Error importing watchlist: {str(e)}", "error")
 
 def main():
-    st.title("Signals")
+    st.title("Stock Trading Signals")
 
     if 'tickers' not in st.session_state:
         st.session_state.tickers = {}
@@ -694,7 +744,7 @@ def main():
     # Add dropdown for selecting timeframe
     st.sidebar.header("Data Configuration")
     interval_options = ["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"]
-    selected_interval = st.sidebar.selectbox("Select Timeframe", interval_options)
+    selected_interval = st.sidebar.selectbox("Select Timeframe", interval_options, index=interval_options.index("1m"))
 
     # Add UI for auto-refresh configuration
     st.sidebar.header("Auto Refresh Configuration")
@@ -847,6 +897,9 @@ def main():
             st.write("No tickers added yet. Use the sidebar to add tickers or import a watchlist.")
     else:
         st.write("Please select or create a profile to start.")
+
+    if st.button("Explain Strategy"):
+        explain_strategy()
 
 if __name__ == "__main__":
     main()
