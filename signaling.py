@@ -18,7 +18,7 @@ TELEGRAM_CHAT_ID = "5611879467"
 def calculate_ema(data, period):
     return data.ewm(span=period, adjust=False).mean()
 
-def fetch_alpha_vantage_data(ticker, interval="5min"):
+def fetch_alpha_vantage_data(ticker, interval="15min"):
     api_key = st.session_state.get('alpha_vantage_api_key', '')
     if not api_key:
         st.error("Alpha Vantage API key is not set. Please enter it in the sidebar.")
