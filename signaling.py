@@ -11,6 +11,7 @@ import threading
 import json
 import pytz
 import requests
+import yfinance as yf
 
 TELEGRAM_TOKEN = "7148511647:AAFlMohYiqPF2GQFtri2qW4H0WU2-j174TQ"
 TELEGRAM_CHAT_ID = "5611879467"
@@ -18,25 +19,17 @@ TELEGRAM_CHAT_ID = "5611879467"
 def calculate_ema(data, period):
     return data.ewm(span=period, adjust=False).mean()
 
-def fetch_alpha_vantage_data(ticker, interval="1min"):
-    api_key = st.session_state.get('alpha_vantage_api_key', '')
-    if not api_key:
-        st.error("Alpha Vantage API key is not set. Please enter it in the sidebar.")
+def fetch_yahoo_finance_data(ticker, interval="1m", period="1d"):
+    try:
+        stock = yf.Ticker(ticker)
+        df = stock.history(interval=interval, period=period)
+        if df.empty:
+            st.error(f"No data available for {ticker}")
+            return pd.DataFrame()
+        return df
+    except Exception as e:
+        st.error(f"Error fetching data for {ticker}: {str(e)}")
         return pd.DataFrame()
-
-    url = f'https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={ticker}&interval={interval}&outputsize=full&apikey={api_key}'
-    r = requests.get(url)
-    data = r.json()
-    
-    if f"Time Series ({interval})" not in data:
-        st.error(f"Error fetching data for {ticker}: {data.get('Note', 'Unknown error')}")
-        return pd.DataFrame()
-    
-    df = pd.DataFrame(data[f"Time Series ({interval})"]).T
-    df.index = pd.to_datetime(df.index)
-    df = df.astype(float)
-    df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-    return df.sort_index()
 
 class SignalGenerator:
     def __init__(self, ticker, ema_period, threshold, stop_loss_percent, price_threshold):
@@ -236,9 +229,9 @@ def show_temporary_message(message, message_type="info", duration=3):
     
     threading.Timer(duration, placeholder.empty).start()
 
-def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_threshold):
+def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_threshold, interval="1m"):
     generator = SignalGenerator(ticker, ema_period, threshold, stop_loss_percent, price_threshold)
-    data = fetch_alpha_vantage_data(ticker)
+    data = fetch_yahoo_finance_data(ticker, interval)
     if data.empty:
         return {
             "ticker": ticker,
@@ -270,104 +263,55 @@ def generate_signal(ticker, ema_period, threshold, stop_loss_percent, price_thre
     
     return result
 
-def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_threshold):
-    data = fetch_alpha_vantage_data(ticker)
+def create_chart(ticker, ema_period, threshold, stop_loss_percent, price_threshold, interval="1m"):
+    data = fetch_yahoo_finance_data(ticker, interval)
     if data.empty:
         show_temporary_message(f"No data available to create chart for {ticker}", "warning")
         return None, None, None
     
     ema = calculate_ema(data['Close'], ema_period)
     
-    price_based_data = []
-    current_candle = data.iloc[0].copy()
-    last_price = current_candle['Close']
-
-    for i in range(1, len(data)):
-        row = data.iloc[i]
-        price_change = abs(row['Close'] - last_price) / last_price
-        if price_change >= price_threshold:
-            current_candle['EMA'] = ema.iloc[i-1]
-            price_based_data.append(current_candle)
-            current_candle = row.copy()
-            last_price = row['Close']
-        else:
-            current_candle['High'] = max(current_candle['High'], row['High'])
-            current_candle['Low'] = min(current_candle['Low'], row['Low'])
-            current_candle['Close'] = row['Close']
-            current_candle['Volume'] += row['Volume']
-
-    current_candle['EMA'] = ema.iloc[-1]
-    price_based_data.append(current_candle)
-    price_based_df = pd.DataFrame(price_based_data)
-
-    price_based_df['Deviation'] = (price_based_df['Close'] - price_based_df['EMA']) / price_based_df['EMA']
+    data['EMA'] = ema
+    data['Deviation'] = (data['Close'] - data['EMA']) / data['EMA']
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                        vertical_spacing=0.03, subplot_titles=(f'{ticker} Price-Based Candles and EMA', 'Deviation'),
+                        vertical_spacing=0.03, subplot_titles=(f'{ticker} Price and EMA', 'Deviation'),
                         row_heights=[0.7, 0.3])
     
-    fig.add_trace(go.Candlestick(x=price_based_df.index, open=price_based_df['Open'], high=price_based_df['High'],
-                                 low=price_based_df['Low'], close=price_based_df['Close'], name='Price'),
+    fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'],
+                                 low=data['Low'], close=data['Close'], name='Price'),
                   row=1, col=1)
-    fig.add_trace(go.Scatter(x=price_based_df.index, y=price_based_df['EMA'], name=f'EMA-{ema_period}', line=dict(color='orange')),
+    fig.add_trace(go.Scatter(x=data.index, y=data['EMA'], name=f'EMA-{ema_period}', line=dict(color='orange')),
                   row=1, col=1)
     
-    fig.add_trace(go.Scatter(x=price_based_df.index, y=price_based_df['Deviation'], name='Deviation', line=dict(color='purple')),
+    fig.add_trace(go.Scatter(x=data.index, y=data['Deviation'], name='Deviation', line=dict(color='purple')),
                   row=2, col=1)
     fig.add_hline(y=threshold, line_dash="dash", line_color="green", row=2, col=1)
     fig.add_hline(y=-threshold, line_dash="dash", line_color="red", row=2, col=1)
     
-    time_intervals = pd.date_range(start=price_based_df.index.min(), end=price_based_df.index.max(), freq='D')
-    for time in time_intervals:
-        fig.add_vline(x=time, line_width=1, line_dash="dash", line_color="rgba(100,100,100,0.2)", row="all")
+    buy_signals = data[data['Deviation'] < -threshold]
+    sell_signals = data[data['Deviation'] > threshold]
 
-    buy_signals = []
-    sell_signals = []
+    fig.add_trace(go.Scatter(x=buy_signals.index, y=buy_signals['Low'], mode='markers',
+                             marker=dict(symbol='triangle-up', size=10, color='green'),
+                             name='Buy Signal'),
+                  row=1, col=1)
+    fig.add_trace(go.Scatter(x=sell_signals.index, y=sell_signals['High'], mode='markers',
+                             marker=dict(symbol='triangle-down', size=10, color='red'),
+                             name='Sell Signal'),
+                  row=1, col=1)
 
-    for i in range(1, len(price_based_df)):
-        if abs(price_based_df['Deviation'].iloc[i]) > threshold:
-            if price_based_df['Deviation'].iloc[i] < 0:
-                buy_signals.append(i)
-                fig.add_trace(go.Scatter(x=[price_based_df.index[i]], y=[price_based_df['Low'].iloc[i]], mode='markers',
-                                         marker=dict(symbol='triangle-up', size=10, color='green'),
-                                         name='Buy Signal'),
-                              row=1, col=1)
-            else:
-                sell_signals.append(i)
-                fig.add_trace(go.Scatter(x=[price_based_df.index[i]], y=[price_based_df['High'].iloc[i]], mode='markers',
-                                         marker=dict(symbol='triangle-down', size=10, color='red'),
-                                         name='Sell Signal'),
-                              row=1, col=1)
-
-    for i in range(1, len(price_based_df)):
-        if i in buy_signals:
-            for j in range(i+1, len(price_based_df)):
-                if price_based_df['Close'].iloc[j] >= price_based_df['EMA'].iloc[j]:
-                    fig.add_trace(go.Scatter(x=[price_based_df.index[j]], y=[price_based_df['High'].iloc[j]], mode='markers',
-                                             marker=dict(symbol='square', size=8, color='blue'),
-                                             name='Long Exit'),
-                                  row=1, col=1)
-                    break
-        elif i in sell_signals:
-            for j in range(i+1, len(price_based_df)):
-                if price_based_df['Close'].iloc[j] <= price_based_df['EMA'].iloc[j]:
-                    fig.add_trace(go.Scatter(x=[price_based_df.index[j]], y=[price_based_df['Low'].iloc[j]], mode='markers',
-                                             marker=dict(symbol='square', size=8, color='orange'),
-                                             name='Short Exit'),
-                                  row=1, col=1)
-                    break
-
-    fig.update_layout(height=800, title_text=f"{ticker} Price-Based Analysis")
+    fig.update_layout(height=800, title_text=f"{ticker} Analysis")
     fig.update_xaxes(rangeslider_visible=False)
     
-    current_price = price_based_df['Close'].iloc[-1]
-    last_updated = price_based_df.index[-1]
+    current_price = data['Close'].iloc[-1]
+    last_updated = data.index[-1]
     
     return fig, current_price, last_updated
 
 def fetch_current_price(ticker):
     try:
-        data = fetch_alpha_vantage_data(ticker)
+        data = fetch_yahoo_finance_data(ticker, interval="1m", period="1d")
         return data['Close'].iloc[-1]
     except Exception as e:
         st.error(f"Error fetching current price for {ticker}: {str(e)}")
@@ -408,7 +352,7 @@ def send_new_signals_to_telegram(new_signals):
         print(f"Request failed: {e}")
         return "failed"
 
-def refresh_signals():
+def refresh_signals(interval):
     progress_bar = st.empty()
     status_text = st.empty()
     
@@ -426,7 +370,8 @@ def refresh_signals():
                 ticker_data["ema_period"], 
                 ticker_data["threshold"], 
                 ticker_data["stop_loss_percent"],
-                ticker_data["price_threshold"]
+                ticker_data["price_threshold"],
+                interval=interval
             )
             
             if signal_data["signal"] in ["BUY", "SELL"]:
@@ -486,7 +431,7 @@ def refresh_signals():
     if new_active_signals:
         send_new_signals_to_telegram(new_active_signals)
 
-def auto_refresh():
+def auto_refresh(interval):
     if st.session_state.get('auto_refresh', False):
         if 'last_refresh' not in st.session_state:
             st.session_state.last_refresh = tm.time()
@@ -495,7 +440,7 @@ def auto_refresh():
         elapsed_time = current_time - st.session_state.last_refresh
         
         if elapsed_time >= st.session_state.refresh_interval * 60:  # Convert minutes to seconds
-            refresh_signals()
+            refresh_signals(interval)
             st.session_state.last_refresh = current_time
             st.experimental_rerun()
         else:
@@ -746,11 +691,10 @@ def main():
     if 'last_refresh' not in st.session_state:
         st.session_state.last_refresh = tm.time()
 
-    # Add UI for Alpha Vantage API key input
-    st.sidebar.header("API Configuration")
-    api_key = st.sidebar.text_input("Enter Alpha Vantage API Key", type="password")
-    if api_key:
-        st.session_state.alpha_vantage_api_key = api_key
+    # Add dropdown for selecting timeframe
+    st.sidebar.header("Data Configuration")
+    interval_options = ["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"]
+    selected_interval = st.sidebar.selectbox("Select Timeframe", interval_options)
 
     # Add UI for auto-refresh configuration
     st.sidebar.header("Auto Refresh Configuration")
@@ -805,8 +749,8 @@ def main():
         st.header("Watchlist and Signals")
 
         if st.button("Refresh All Signals"):
-            refresh_signals()
-            exit_signals = check_exit_signals(st.session_state.current_profile, generate_signal)
+            refresh_signals(selected_interval)
+            exit_signals = check_exit_signals(st.session_state.current_profile, lambda *args: generate_signal(*args, interval=selected_interval))
             st.session_state.exit_signals_for_open_positions = [
                 {
                     "Ticker": ticker,
@@ -819,7 +763,7 @@ def main():
             show_temporary_message("All signals refreshed!", "success")
         
         if st.session_state.auto_refresh:
-            auto_refresh()
+            auto_refresh(selected_interval)
 
         display_active_signals()
 
@@ -861,12 +805,14 @@ def main():
                     ticker_data["ema_period"],
                     ticker_data["threshold"],
                     ticker_data["stop_loss_percent"],
-                    ticker_data["price_threshold"]
+                    ticker_data["price_threshold"],
+                    interval=selected_interval
                 )
                 if chart:
                     st.plotly_chart(chart, use_container_width=True)
                     st.write(f"Current Price: ${current_price:.2f}")
                     st.write(f"Last Updated: {last_updated}")
+                    st.write(f"Timeframe: {selected_interval}")
             
             if not df.equals(edited_df):
                 for index, row in edited_df.iterrows():
